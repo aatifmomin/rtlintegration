@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Port Connector</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior: none;
+        }
+        canvas {
+            cursor: default;
+            background-color: #f9fafb; /* gray-50 */
+            border: 1px solid #d1d5db; /* gray-300 */
+            border-radius: 0.5rem;
+            touch-action: none; /* Prevents scrolling on touch devices when interacting with canvas */
+        }
+        .text-input {
+            position: absolute;
+            background-color: white;
+            border: 1px solid #3b82f6;
+            outline: none;
+            padding: 2px 4px;
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+            z-index: 100;
+            box-sizing: border-box;
+            border-radius: 3px;
+        }
+        .custom-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+            align-items: center;
+            justify-content: center;
+        }
+        .custom-modal-content {
+            background-color: #fefefe;
+            margin: auto;
+            padding: 24px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 400px;
+            border-radius: 0.5rem;
+            text-align: center;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        }
+        input[type="color"] {
+            -webkit-appearance: none; -moz-appearance: none; appearance: none;
+            width: 44px; height: 24px; background-color: transparent;
+            border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer;
+        }
+        input[type="color"]::-webkit-color-swatch { border-radius: 3px; border: none; }
+        input[type="color"]::-moz-color-swatch { border-radius: 3px; border: none; }
+        
+        .glass-header {
+            background-color: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .header-btn {
+            background-color: rgba(255, 255, 255, 0.5);
+            border: 1px solid rgba(209, 213, 219, 0.8);
+            color: #374151;
+            transition: background-color 0.2s;
+        }
+        .header-btn:hover:not(:disabled) {
+            background-color: rgba(243, 244, 246, 0.8);
+        }
+         .header-btn:disabled {
+            background-color: rgba(229, 231, 235, 0.5);
+            color: #9ca3af;
+             cursor: not-allowed;
+        }
+        .header-btn.active {
+            background-color: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 flex flex-col h-screen overflow-hidden">
+
+    <header class="glass-header shadow-md p-4 z-10 border-b border-gray-200">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-gray-700">Interactive Diagram Tool</h1>
+            <div class="flex items-center space-x-2">
+                 <button id="undoBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Undo</button>
+                 <button id="redoBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Redo</button>
+                 <div class="w-px h-6 bg-gray-300"></div>
+                 <button id="createPortBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Create Port</button>
+                 <button id="connectBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Connect</button>
+                 <button id="addNodeBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Add Node</button>
+                 <button id="deleteBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Delete</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow flex p-4 gap-4 overflow-hidden">
+        <div class="flex-grow relative" id="canvas-container">
+            <canvas id="diagramCanvas"></canvas>
+        </div>
+
+        <div class="w-full max-w-sm bg-white p-4 rounded-lg shadow-md flex flex-col space-y-4 overflow-y-auto">
+            <div id="properties-panel">
+                <p id="no-selection" class="text-sm text-gray-500 italic">No item selected.</p>
+            </div>
+            
+            <div class="flex-grow flex flex-col pt-4 border-t">
+                <h2 class="text-lg font-semibold mb-3 border-b pb-2">Diagram Data</h2>
+                <textarea id="dataModelText" class="w-full flex-grow border border-gray-300 rounded-md p-2 text-xs font-mono bg-gray-50" spellcheck="false"></textarea>
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                    <button id="saveBtn" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Save State</button>
+                    <button id="loadBtn" class="bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Load State</button>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <div id="errorModal" class="custom-modal">
+        <div class="custom-modal-content">
+            <p id="modalMessage" class="mb-4"></p>
+            <button id="closeModalBtn" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg">OK</button>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const canvas = document.getElementById('diagramCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvas-container');
+
+        // --- Data ---
+        let nodes = []; let ports = []; let links = [];
+        let nextIds = { node: 0, port: 0, link: 0 };
+        let history = []; let redoStack = [];
+
+        // --- State ---
+        let selection = null; let hovered = null;
+        let isDragging = false; let isResizing = false; let resizingDirection = null;
+        let isConnectionMode = false; let connectionPath = [];
+        let isPortCreationMode = false;
+        let isMovingLinkPoint = false; 
+        let isMovingPortText = false;
+        let movingPointInfo = null;
+        let activeTextInput = null; let dragOffset = {};
+        let mousePos = { x: 0, y: 0 };
+        let pan = { x: 0, y: 0 };
+        let scale = 1;
+        let isPanning = false;
+        
+        // --- Constants ---
+        const portSize = 8; const handleSize = 8;
+        const minNodeWidth = 40; const minNodeHeight = 30;
+
+        // --- DOM Elements ---
+        const undoBtn = document.getElementById('undoBtn');
+        const redoBtn = document.getElementById('redoBtn');
+        const createPortBtn = document.getElementById('createPortBtn');
+        const connectBtn = document.getElementById('connectBtn');
+        const addNodeBtn = document.getElementById('addNodeBtn');
+        const deleteBtn = document.getElementById('deleteBtn');
+        const saveBtn = document.getElementById('saveBtn');
+        const loadBtn = document.getElementById('loadBtn');
+        const dataModelText = document.getElementById('dataModelText');
+        const propertiesPanel = document.getElementById('properties-panel');
+        const modalMessage = document.getElementById('modalMessage');
+        const errorModal = document.getElementById('errorModal');
+        const closeModalBtn = document.getElementById('closeModalBtn');
+        
+        // --- History Management ---
+        function saveStateToHistory() {
+            const state = {
+                nodes: JSON.parse(JSON.stringify(nodes)),
+                ports: JSON.parse(JSON.stringify(ports)),
+                links: JSON.parse(JSON.stringify(links)),
+                nextIds: JSON.parse(JSON.stringify(nextIds)),
+            };
+            history.push(state);
+            redoStack = []; 
+            updateUndoRedoButtons();
+        }
+
+        function undo() {
+            if (history.length > 1) {
+                const currentState = history.pop();
+                redoStack.push(currentState);
+                
+                const prevState = history[history.length - 1];
+                loadState(prevState, false);
+            }
+            updateUndoRedoButtons();
+        }
+
+        function redo() {
+            if (redoStack.length > 0) {
+                const nextState = redoStack.pop();
+                history.push(nextState);
+                loadState(nextState, false);
+            }
+             updateUndoRedoButtons();
+        }
+
+        function loadState(state, saveToHistory = true) {
+             nodes = state.nodes;
+             ports = state.ports;
+             links = state.links;
+             nextIds = state.nextIds;
+             selection = null;
+             if (saveToHistory) {
+                 saveStateToHistory();
+             }
+             updateUI();
+             draw();
+        }
+        
+        function updateUndoRedoButtons() {
+            undoBtn.disabled = history.length <= 1;
+            redoBtn.disabled = redoStack.length === 0;
+        }
+
+        // --- Core Data Functions ---
+        function generateId(type) { return nextIds[type]++; }
+        function findNode(id) { return nodes.find(n => n.id === id); }
+        function findPort(id) { return ports.find(p => p.id === id); }
+        function findLink(id) { return links.find(l => l.id === id); }
+        function getDescendantIds(parentId) {
+            let childrenIds = [];
+            const directChildren = nodes.filter(n => n.parentId === parentId);
+            for (const child of directChildren) {
+                childrenIds.push(child.id);
+                childrenIds = childrenIds.concat(getDescendantIds(child.id));
+            }
+            return childrenIds;
+        }
+
+        function getPortAbsPos(port) {
+            if (!port) return null;
+            const node = findNode(port.nodeId);
+            if (!node) return null;
+            switch (port.side) {
+                case 'top': return { x: node.x + node.width * port.position, y: node.y };
+                case 'bottom': return { x: node.x + node.width * port.position, y: node.y + node.height };
+                case 'left': return { x: node.x, y: node.y + node.height * port.position };
+                case 'right': return { x: node.x + node.width, y: node.y + node.height * port.position };
+            }
+            return null;
+        }
+        
+        function getResizeHandleAtPos(pos, node) {
+            if (!node || node.isFixed) return null;
+            const handles = {
+                topLeft: { x: node.x, y: node.y, cursor: 'nwse-resize' },
+                top: { x: node.x + node.width / 2, y: node.y, cursor: 'ns-resize' },
+                topRight: { x: node.x + node.width, y: node.y, cursor: 'nesw-resize' },
+                left: { x: node.x, y: node.y + node.height / 2, cursor: 'ew-resize' },
+                right: { x: node.x + node.width, y: node.y + node.height / 2, cursor: 'ew-resize' },
+                bottomLeft: { x: node.x, y: node.y + node.height, cursor: 'nesw-resize' },
+                bottom: { x: node.x + node.width / 2, y: node.y + node.height, cursor: 'ns-resize' },
+                bottomRight: { x: node.x + node.width, y: node.y + node.height, cursor: 'nwse-resize' },
+            };
+            for (const [direction, handlePos] of Object.entries(handles)) {
+                const hx = handlePos.x - handleSize / 2;
+                const hy = handlePos.y - handleSize / 2;
+                if (pos.x >= hx && pos.x <= hx + handleSize && pos.y >= hy && pos.y <= hy + handleSize) {
+                    return { direction, cursor: handlePos.cursor };
+                }
+            }
+            return null;
+        }
+
+        function moveNodeAndDescendants(nodeId, dx, dy) {
+            const node = findNode(nodeId);
+            if (!node) return;
+            node.x += dx;
+            node.y += dy;
+            const children = nodes.filter(n => n.parentId === nodeId);
+            children.forEach(child => moveNodeAndDescendants(child.id, dx, dy));
+        }
+
+        // --- Canvas & Drawing ---
+        function resizeCanvas() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            draw();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.save();
+            ctx.translate(pan.x, pan.y);
+            ctx.scale(scale, scale);
+
+            drawGrid();
+
+            const selectedNode = selection?.type === 'node' ? findNode(selection.id) : null;
+            const hoveredNode = hovered?.type === 'node' ? findNode(hovered.id) : null;
+            
+            const sortedNodes = getSortedNodesForDrawing();
+            sortedNodes.forEach(node => {
+                const isSelected = selectedNode?.id === node.id;
+                const isHovered = hoveredNode?.id === node.id;
+                drawNode(node, isSelected, isHovered);
+            });
+
+            calculateAllLinkPaths();
+            links.forEach(link => drawLink(link));
+            if (isConnectionMode && connectionPath.length > 0) {
+                 const previewPath = getPreviewPath();
+                 drawLinkPath(previewPath, '#3b82f6', true);
+            }
+
+            ports.forEach(port => drawPort(port));
+
+            if (selectedNode && !activeTextInput && !selectedNode.isFixed) {
+                drawResizeHandles(selectedNode);
+            }
+            ctx.restore();
+        }
+        
+        function drawGrid() {
+            const gridSize = 20;
+            const scaledGridSize = gridSize * scale;
+            const lineCountX = Math.ceil(canvas.width / scaledGridSize);
+            const lineCountY = Math.ceil(canvas.height / scaledGridSize);
+
+            const startX = -pan.x / scale;
+            const startY = -pan.y / scale;
+
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 1 / scale;
+
+            ctx.beginPath();
+            for (let i = 0; i < lineCountX + 1; i++) {
+                const x = Math.floor(startX / gridSize) * gridSize + i * gridSize;
+                ctx.moveTo(x, startY);
+                ctx.lineTo(x, startY + canvas.height / scale);
+            }
+             for (let i = 0; i < lineCountY + 1; i++) {
+                const y = Math.floor(startY / gridSize) * gridSize + i * gridSize;
+                ctx.moveTo(startX, y);
+                ctx.lineTo(startX + canvas.width / scale, y);
+            }
+            ctx.stroke();
+        }
+        
+        function drawNode(node, isSelected, isHovered) {
+             if (!node.isTransparent) {
+                ctx.fillStyle = node.backgroundColor || '#ffffff';
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
+                
+                ctx.beginPath();
+                ctx.moveTo(node.x + 10, node.y);
+                ctx.lineTo(node.x + node.width - 10, node.y);
+                ctx.quadraticCurveTo(node.x + node.width, node.y, node.x + node.width, node.y + 10);
+                ctx.lineTo(node.x + node.width, node.y + node.height - 10);
+                ctx.quadraticCurveTo(node.x + node.width, node.y + node.height, node.x + node.width - 10, node.y + node.height);
+                ctx.lineTo(node.x + 10, node.y + node.height);
+                ctx.quadraticCurveTo(node.x, node.y + node.height, node.x, node.y + node.height - 10);
+                ctx.lineTo(node.x, node.y + 10);
+                ctx.quadraticCurveTo(node.x, node.y, node.x + 10, node.y);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.shadowColor = 'transparent';
+             }
+
+             let strokeStyle = isSelected || (isHovered && !isConnectionMode && !isPortCreationMode) ? '#3b82f6' : (node.lineColor || '#9ca3af');
+             if (isPortCreationMode && isHovered) {
+                 strokeStyle = '#16a34a'; 
+             }
+             ctx.strokeStyle = strokeStyle;
+             ctx.lineWidth = isSelected || (isPortCreationMode && isHovered) ? 3 : 2;
+             if (node.lineStyle === 'Dotted') ctx.setLineDash([2, 4]);
+             else if (node.lineStyle === 'Dashed') ctx.setLineDash([10, 5]);
+             else ctx.setLineDash([]);
+             
+             ctx.beginPath();
+             ctx.moveTo(node.x + 10, node.y);
+             ctx.lineTo(node.x + node.width - 10, node.y);
+             ctx.quadraticCurveTo(node.x + node.width, node.y, node.x + node.width, node.y + 10);
+             ctx.lineTo(node.x + node.width, node.y + node.height - 10);
+             ctx.quadraticCurveTo(node.x + node.width, node.y + node.height, node.x + node.width - 10, node.y + node.height);
+             ctx.lineTo(node.x + 10, node.y + node.height);
+             ctx.quadraticCurveTo(node.x, node.y + node.height, node.x, node.y + node.height - 10);
+             ctx.lineTo(node.x, node.y + 10);
+             ctx.quadraticCurveTo(node.x, node.y, node.x + 10, node.y);
+             ctx.closePath();
+             
+             ctx.stroke();
+             ctx.setLineDash([]);
+
+             if (!activeTextInput || activeTextInput.targetType !== 'node' || activeTextInput.targetId !== node.id) {
+                 ctx.fillStyle = '#1f2937';
+                 ctx.font = '14px Inter';
+                 ctx.textAlign = 'left';
+                 ctx.textBaseline = 'top';
+                 ctx.fillText(node.text, node.x + 10, node.y + 10);
+             }
+             if (node.isFixed) {
+                 drawLockIcon(ctx, node.x + node.width - 18, node.y + 5);
+             }
+        }
+
+        function drawPort(port) {
+            const pos = getPortAbsPos(port);
+            if (!pos) return;
+            const isHoveredForConnect = isConnectionMode && hovered?.type === 'port' && hovered.id === port.id;
+            ctx.fillStyle = port.color || '#3b82f6';
+            ctx.fillRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
+            
+            if ((hovered?.type === 'port' && hovered.id === port.id && !isConnectionMode) || isHoveredForConnect) {
+                ctx.strokeStyle = isHoveredForConnect ? '#22c55e' : '#2563eb';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
+            }
+            
+            if (!activeTextInput || activeTextInput.targetType !== 'port' || activeTextInput.targetId !== port.id) {
+                ctx.fillStyle = '#4b5563';
+                ctx.font = '10px Inter';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(port.text, pos.x + port.textOffsetX, pos.y + port.textOffsetY);
+            }
+        }
+        
+        function drawLink(link) {
+            const isSelected = selection?.type === 'link' && selection.id === link.id;
+            drawLinkPath(link.path, link.color || '#6b7280', false, isSelected);
+            link.jumps.forEach(jump => {
+                 const isHorizontal = jump.direction === 'h';
+                 drawJump(jump.pos, isSelected ? 4 : 2, isHorizontal, link.color || '#6b7280');
+            });
+            if (isSelected) {
+                drawLinkWaypointHandles(link);
+            }
+            if (link.direction && link.direction !== 'none' && link.path.length > 1) {
+                if (link.direction === '-->' || link.direction === '<-->') {
+                    const from = link.path[link.path.length - 2];
+                    const to = link.path[link.path.length - 1];
+                    drawArrowhead(ctx, from, to, link.color || '#6b7280');
+                }
+                if (link.direction === '<--' || link.direction === '<-->') {
+                    const from = link.path[1];
+                    const to = link.path[0];
+                    drawArrowhead(ctx, from, to, link.color || '#6b7280');
+                }
+            }
+        }
+
+        function drawLinkPath(path, color, isDashed = false, isSelected = false) {
+            if (!path || path.length < 2) return;
+            ctx.beginPath();
+            ctx.moveTo(path[0].x, path[0].y);
+            for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = isSelected ? 4 : 2;
+            if (isDashed) ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            if (isDashed) ctx.setLineDash([]);
+        }
+        
+        function drawArrowhead(ctx, from, to, color) {
+            const headlen = 10;
+            const angle = Math.atan2(to.y - from.y, to.x - from.x);
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.fillStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(to.x, to.y);
+            ctx.lineTo(to.x - headlen * Math.cos(angle - Math.PI / 6), to.y - headlen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(to.x - headlen * Math.cos(angle + Math.PI / 6), to.y - headlen * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.stroke();
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawJump(pos, lineWidth, isHorizontal, lineColor) {
+            ctx.save();
+            ctx.beginPath();
+            if (isHorizontal) ctx.arc(pos.x, pos.y, 5, Math.PI, 0, false);
+            else ctx.arc(pos.x, pos.y, 5, Math.PI * 1.5, Math.PI * 0.5, false);
+            ctx.strokeStyle = '#f9fafb';
+            ctx.lineWidth = lineWidth + 2;
+            ctx.stroke();
+            ctx.beginPath();
+            if (isHorizontal) ctx.arc(pos.x, pos.y, 5, Math.PI, 0, false);
+            else ctx.arc(pos.x, pos.y, 5, Math.PI * 1.5, Math.PI * 0.5, false);
+            ctx.strokeStyle = lineColor;
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawLockIcon(ctx, x, y) {
+            ctx.save();
+            ctx.strokeStyle = '#6b7280';
+            ctx.fillStyle = '#d1d5db';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.rect(x, y, 10, 7);
+            ctx.fill();
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x + 2, y);
+            ctx.arc(x + 5, y, 3, Math.PI, 0);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawResizeHandles(node) {
+            ctx.fillStyle = '#3b82f6';
+            const handlePositions = {
+                topLeft: { x: node.x, y: node.y }, top: { x: node.x + node.width / 2, y: node.y },
+                topRight: { x: node.x + node.width, y: node.y }, left: { x: node.x, y: node.y + node.height / 2 },
+                right: { x: node.x + node.width, y: node.y + node.height / 2 }, bottomLeft: { x: node.x, y: node.y + node.height },
+                bottom: { x: node.x + node.width / 2, y: node.y + node.height }, bottomRight: { x: node.x + node.width, y: node.y + node.height}
+            };
+            for (const pos of Object.values(handlePositions)) {
+                ctx.fillRect(pos.x - handleSize / 2, pos.y - handleSize / 2, handleSize, handleSize);
+            }
+        }
+        
+        function drawLinkWaypointHandles(link) {
+            if (!link || !link.path) return;
+            ctx.fillStyle = '#9333ea'; // Purple
+            for (let i = 1; i < link.path.length - 1; i++) {
+                const pt = link.path[i];
+                ctx.fillRect(pt.x - 4, pt.y - 4, 8, 8);
+            }
+        }
+
+        function getSortedNodesForDrawing() {
+            const nodeMap = new Map(nodes.map(n => [n.id, { ...n, children: [] }]));
+            const rootNodes = [];
+            for (const node of nodeMap.values()) {
+                if (node.parentId != null && nodeMap.has(node.parentId)) {
+                    nodeMap.get(node.parentId).children.push(node);
+                } else { rootNodes.push(node); }
+            }
+            const sorted = [];
+            function flatten(node) {
+                const originalNode = findNode(node.id);
+                if(originalNode) sorted.push(originalNode);
+                node.children.sort((a,b) => a.id - b.id).forEach(flatten);
+            }
+            rootNodes.sort((a,b) => a.id - b.id).forEach(flatten);
+            return sorted;
+        }
+
+        // --- Link Path & Jump Calculation ---
+        function calculateAllLinkPaths() {
+             links.forEach(link => {
+                const startPort = findPort(link.fromPortId);
+                const endPort = findPort(link.toPortId);
+                if (!startPort || !endPort) { link.path = []; return; }
+                const startPos = getPortAbsPos(startPort);
+                const endPos = getPortAbsPos(endPort);
+                if (!startPos || !endPos) { link.path = []; return; }
+                link.path[0] = startPos;
+                link.path[link.path.length-1] = endPos;
+             });
+             
+             links.forEach(l => l.jumps = []);
+             for (let i = 0; i < links.length; i++) {
+                 for (let j = i + 1; j < links.length; j++) {
+                     findAndAddJumps(links[i], links[j]);
+                 }
+             }
+        }
+        
+        function findAndAddJumps(link1, link2) {
+            if (!link1.path || !link2.path) return;
+            for (let i = 0; i < link1.path.length - 1; i++) {
+                for (let j = 0; j < link2.path.length - 1; j++) {
+                    const intersection = getLineIntersection(link1.path[i], link1.path[i + 1], link2.path[j], link2.path[j+1]);
+                    if (intersection) {
+                        const isLink1Horizontal = link1.path[i].y === link1.path[i+1].y;
+                        if(isLink1Horizontal) link1.jumps.push({pos: intersection, direction: 'h'});
+                        else link2.jumps.push({pos: intersection, direction: 'v'});
+                    }
+                }
+            }
+        }
+        
+        function getLineIntersection(p1, p2, p3, p4) {
+             const isP1P2Horizontal = p1.y === p2.y;
+             const isP3P4Horizontal = p3.y === p4.y;
+             if (isP1P2Horizontal === isP3P4Horizontal) return null;
+
+             const h1 = isP1P2Horizontal ? p1 : p3; const h2 = isP1P2Horizontal ? p2 : p4;
+             const v1 = isP1P2Horizontal ? p3 : p1; const v2 = isP1P2Horizontal ? p4 : p2;
+
+             const margin = 1; 
+             if (v1.x > Math.min(h1.x, h2.x) + margin && v1.x < Math.max(h1.x, h2.x) - margin &&
+                 h1.y > Math.min(v1.y, v2.y) + margin && h1.y < Math.max(v1.y, v2.y) - margin) {
+                 return { x: v1.x, y: h1.y };
+             }
+             return null;
+        }
+        
+        function distToSegment(p, v, w) {
+          const l2 = (v.x - w.x)**2 + (v.y - w.y)**2;
+          if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+          let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+          t = Math.max(0, Math.min(1, t));
+          return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
+        }
+
+        // --- Event Handlers ---
+        function updateMousePos(event) {
+            const rect = canvas.getBoundingClientRect();
+            mousePos.x = (event.clientX - rect.left - pan.x) / scale;
+            mousePos.y = (event.clientY - rect.top - pan.y) / scale;
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (activeTextInput) return;
+            updateMousePos(e);
+            
+            if (isPanning) {
+                pan.x += e.movementX;
+                pan.y += e.movementY;
+            } else {
+                 const activeModes = isConnectionMode || isPortCreationMode;
+            
+                if (isMovingLinkPoint && movingPointInfo) {
+                    const link = findLink(movingPointInfo.linkId);
+                    const i = movingPointInfo.pointIndex;
+                    if (!link || !link.path[i-1] || !link.path[i+1]) return;
+                    
+                    const currentPoint = link.path[i];
+                    const prevPoint = link.path[i-1];
+                    
+                    const isPrevVertical = prevPoint.x === currentPoint.x;
+                    
+                    if(isPrevVertical) {
+                        currentPoint.y = mousePos.y;
+                        prevPoint.y = mousePos.y;
+                    } else {
+                        currentPoint.x = mousePos.x;
+                        prevPoint.x = mousePos.x;
+                    }
+                } else if (isMovingPortText && movingPointInfo) {
+                    const port = findPort(movingPointInfo.portId);
+                    const portPos = getPortAbsPos(port);
+                    port.textOffsetX = mousePos.x - portPos.x;
+                    port.textOffsetY = mousePos.y - portPos.y;
+
+                } else if (activeModes) {
+                     hovered = null;
+                     const item = findItemAtPos(mousePos);
+                     if (isConnectionMode && item?.type === 'port') hovered = item;
+                     if (isPortCreationMode && item?.type === 'node') hovered = item;
+                } else if (isResizing && selection?.type === 'node') {
+                    const node = findNode(selection.id);
+                    if (node.isFixed) return;
+                    const dx = (mousePos.x - dragOffset.startWorldX);
+                    const dy = (mousePos.y - dragOffset.startWorldY);
+                    
+                    let newX = dragOffset.nodeX, newY = dragOffset.nodeY;
+                    let newW = dragOffset.nodeW, newH = dragOffset.nodeH;
+
+                    if (resizingDirection.includes('top')) { newY += dy; newH -= dy; }
+                    if (resizingDirection.includes('left')) { newX += dx; newW -= dx; }
+                    if (resizingDirection.includes('bottom')) { newH += dy; }
+                    if (resizingDirection.includes('right')) { newW += dx; }
+                    
+                    if (newW >= minNodeWidth) { node.x = newX; node.width = newW; }
+                    if (newH >= minNodeHeight) { node.y = newY; node.height = newH; }
+
+                } else if (isDragging && selection?.type === 'node') {
+                    const node = findNode(selection.id);
+                    if (node.isFixed) return;
+                    
+                    let newX = mousePos.x - dragOffset.offsetX;
+                    let newY = mousePos.y - dragOffset.offsetY;
+                    
+                    const dx = newX - node.x;
+                    const dy = newY - node.y;
+                    if (dx !== 0 || dy !== 0) {
+                        const allMovedNodeIds = [selection.id, ...getDescendantIds(selection.id)];
+                        links.forEach(link => {
+                            const fromNodeId = findPort(link.fromPortId)?.nodeId;
+                            const toNodeId = findPort(link.toPortId)?.nodeId;
+                            const fromIsMoving = allMovedNodeIds.includes(fromNodeId);
+                            const toIsMoving = allMovedNodeIds.includes(toNodeId);
+
+                            if(fromIsMoving && toIsMoving) {
+                               for (let i = 0; i < link.path.length; i++) {
+                                    link.path[i].x += dx;
+                                    link.path[i].y += dy;
+                                }
+                            }
+                        });
+                        
+                        moveNodeAndDescendants(selection.id, dx, dy);
+                    }
+                } else {
+                    const handleInfo = getResizeHandleAtPos(mousePos, findNode(selection?.id));
+                    if (handleInfo) {
+                        canvas.style.cursor = handleInfo.cursor;
+                        hovered = selection;
+                    } else {
+                        hovered = findItemAtPos(mousePos);
+                        let cursorStyle = 'default';
+                        if (hovered?.type === 'linkPoint' || isMovingPortText) cursorStyle = 'grab';
+                        else if (hovered?.type === 'port') cursorStyle = 'pointer';
+                        else if (hovered?.type === 'node') cursorStyle = 'move';
+                        canvas.style.cursor = cursorStyle;
+                    }
+                }
+            }
+            draw();
+        });
+        
+        function findItemAtPos(pos) {
+            // Priority 1: Link Waypoint Handles on the currently selected link
+            if (selection?.type === 'link') {
+                const link = findLink(selection.id);
+                if (link && link.path) {
+                    for (let i = 1; i < link.path.length - 1; i++) {
+                        const pt = link.path[i];
+                        if (Math.hypot(pos.x - pt.x, pos.y - pt.y) < handleSize) {
+                            return { type: 'linkPoint', linkId: link.id, pointIndex: i };
+                        }
+                    }
+                }
+            }
+            
+            // Priority 2: Port Text
+            for(const port of ports) {
+                const portPos = getPortAbsPos(port);
+                ctx.font = '10px Inter';
+                const textMetrics = ctx.measureText(port.text);
+                const textX = portPos.x + port.textOffsetX;
+                const textY = portPos.y + port.textOffsetY;
+                const textW = textMetrics.width;
+                const textH = 10;
+                if(pos.x > textX - textW/2 && pos.x < textX + textW/2 && pos.y > textY - textH/2 && pos.y < textY + textH/2) {
+                     return { type: 'portText', portId: port.id };
+                }
+            }
+
+            // Priority 3: Ports
+            for (const port of ports) {
+                const portPos = getPortAbsPos(port);
+                if (portPos && (pos.x - portPos.x) ** 2 + (pos.y - portPos.y) ** 2 < portSize ** 2 * 4) {
+                    return { type: 'port', id: port.id };
+                }
+            }
+
+            // Priority 4: Links
+             for (const link of links) {
+                if (!link.path) continue;
+                for (let i = 0; i < link.path.length - 1; i++) {
+                    if (distToSegment(pos, link.path[i], link.path[i + 1]) < 5) {
+                       return { type: 'link', id: link.id };
+                    }
+                }
+            }
+            
+            // Priority 5: Nodes
+            const sorted = getSortedNodesForDrawing().reverse();
+            for (const node of sorted) {
+                if (pos.x > node.x && pos.x < node.x + node.width && pos.y > node.y && pos.y < node.y + node.height) {
+                    return { type: 'node', id: node.id };
+                }
+            }
+            
+            return null;
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (activeTextInput) { activeTextInput.input.blur(); return; }
+            updateMousePos(e);
+            
+            if (e.button === 1) { // Middle mouse button
+                isPanning = true;
+                return;
+            }
+            
+            if (isConnectionMode) { handleConnectionClick(); return; }
+            if (isPortCreationMode) { handlePortCreationClick(); return; }
+            
+            const handleInfo = getResizeHandleAtPos(mousePos, findNode(selection?.id));
+
+            if (handleInfo) {
+                isResizing = true;
+                resizingDirection = handleInfo.direction;
+                const node = findNode(selection.id);
+                dragOffset = { startX: mousePos.x, startY: mousePos.y, nodeX: node.x, nodeY: node.y, nodeW: node.width, nodeH: node.height, startWorldX: mousePos.x, startWorldY: mousePos.y };
+                return;
+            }
+            
+            const item = findItemAtPos(mousePos);
+            if (item?.type === 'linkPoint') {
+                isMovingLinkPoint = true;
+                movingPointInfo = item;
+                return;
+            }
+            if (item?.type === 'portText') {
+                isMovingPortText = true;
+                movingPointInfo = item;
+                return;
+            }
+            
+            selection = item;
+            if(selection?.type === 'node') {
+                const node = findNode(selection.id);
+                if (!node.isFixed) {
+                     isDragging = true;
+                    dragOffset = { offsetX: mousePos.x - node.x, offsetY: mousePos.y - node.y };
+                }
+            } else if (selection === null) {
+                isPanning = true;
+                canvas.style.cursor = 'grabbing';
+            }
+            
+            updateUI();
+            draw();
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if(isDragging || isResizing || isMovingLinkPoint || isMovingPortText) {
+                 saveStateToHistory();
+            }
+            isDragging = false; isResizing = false; resizingDirection = null;
+            isMovingLinkPoint = false; movingPointInfo = null;
+            isMovingPortText = false;
+            isPanning = false;
+            draw();
+        });
+        
+        canvas.addEventListener('dblclick', (e) => {
+            const item = findItemAtPos(mousePos);
+            if (item?.type === 'node') createTextInputForNode(findNode(item.id));
+            if (item?.type === 'port' || item?.type === 'portText') {
+                const portId = item.type === 'port' ? item.id : item.portId;
+                createTextInputForPort(findPort(portId));
+            }
+        });
+        
+        canvas.addEventListener('wheel', (e) => {
+             if (e.ctrlKey) {
+                e.preventDefault();
+                const zoomIntensity = 0.1;
+                const wheel = e.deltaY < 0 ? 1 : -1;
+                const zoom = Math.exp(wheel * zoomIntensity);
+
+                const rect = canvas.getBoundingClientRect();
+                const screenMouseX = e.clientX - rect.left;
+                const screenMouseY = e.clientY - rect.top;
+
+                const worldX = (screenMouseX - pan.x) / scale;
+                const worldY = (screenMouseY - pan.y) / scale;
+
+                scale *= zoom;
+                
+                pan.x = screenMouseX - worldX * scale;
+                pan.y = screenMouseY - worldY * scale;
+
+                draw();
+             }
+        });
+
+        // --- Connection/Port Creation Logic ---
+        function toggleConnectionMode() {
+            if (isPortCreationMode) togglePortCreationMode(false);
+            isConnectionMode = !isConnectionMode;
+            connectionPath = [];
+            if(isConnectionMode) {
+                connectBtn.classList.add('active');
+                canvas.style.cursor = 'crosshair';
+            } else {
+                connectBtn.classList.remove('active');
+                canvas.style.cursor = 'default';
+            }
+            draw();
+        }
+
+         function togglePortCreationMode() {
+            if (isConnectionMode) toggleConnectionMode(false);
+            isPortCreationMode = !isPortCreationMode;
+            if(isPortCreationMode) {
+                createPortBtn.classList.add('active');
+                canvas.style.cursor = 'copy';
+            } else {
+                createPortBtn.classList.remove('active');
+                canvas.style.cursor = 'default';
+            }
+            draw();
+        }
+        
+        function handlePortCreationClick() {
+            if (hovered?.type === 'node') {
+                const node = findNode(hovered.id);
+                const distTop = Math.abs(mousePos.y - node.y);
+                const distBottom = Math.abs(mousePos.y - (node.y + node.height));
+                const distLeft = Math.abs(mousePos.x - node.x);
+                const distRight = Math.abs(mousePos.x - (node.x + node.width));
+                const minDist = Math.min(distTop, distBottom, distLeft, distRight);
+
+                let side, position;
+                if (minDist === distTop) {
+                    side = 'top';
+                    position = Math.max(0, Math.min(1, (mousePos.x - node.x) / node.width));
+                } else if (minDist === distBottom) {
+                    side = 'bottom';
+                    position = Math.max(0, Math.min(1, (mousePos.x - node.x) / node.width));
+                } else if (minDist === distLeft) {
+                    side = 'left';
+                    position = Math.max(0, Math.min(1, (mousePos.y - node.y) / node.height));
+                } else {
+                    side = 'right';
+                    position = Math.max(0, Math.min(1, (mousePos.y - node.y) / node.height));
+                }
+                addPort(node.id, side, position);
+            }
+        }
+        
+        function handleConnectionClick() {
+            if (connectionPath.length === 0) { // Start
+                if (hovered?.type === 'port') {
+                    const startPort = findPort(hovered.id);
+                    connectionPath.push({portId: startPort.id, pos: getPortAbsPos(startPort)});
+                }
+            } else { // Continue or end
+                const lastPoint = connectionPath[connectionPath.length - 1];
+                const newPoint = { x: mousePos.x, y: mousePos.y };
+                
+                const dx = Math.abs(newPoint.x - lastPoint.pos.x);
+                const dy = Math.abs(newPoint.y - lastPoint.pos.y);
+
+                if (dx > dy) newPoint.y = lastPoint.pos.y; else newPoint.x = lastPoint.pos.x;
+                
+                if (hovered?.type === 'port' && hovered.id !== connectionPath[0].portId) {
+                    const endPort = findPort(hovered.id);
+                    connectionPath.push({pos: newPoint});
+                    connectionPath.push({portId: endPort.id, pos: getPortAbsPos(endPort)});
+                    finalizeConnection();
+                } else {
+                    connectionPath.push({pos: newPoint});
+                }
+            }
+            draw();
+        }
+
+        function getPreviewPath() {
+             const path = connectionPath.map(p => p.pos);
+             if (path.length > 0) {
+                 const lastPoint = path[path.length-1];
+                 const dx = Math.abs(mousePos.x - lastPoint.x);
+                 const dy = Math.abs(mousePos.y - lastPoint.y);
+                 if(dx > dy) path.push({x: mousePos.x, y: lastPoint.y});
+                 else path.push({x: lastPoint.x, y: mousePos.y});
+             }
+             return path;
+        }
+
+        function finalizeConnection() {
+            if (connectionPath.length < 2) { toggleConnectionMode(); return; }
+            const fromPortId = connectionPath[0].portId;
+            const toPortId = connectionPath[connectionPath.length - 1].portId;
+            const finalPath = connectionPath.map(p => p.pos);
+            links.push({ id: generateId('link'), fromPortId, toPortId, color: '#6b7280', path: finalPath, jumps: [], direction: 'none' });
+            saveStateToHistory();
+            toggleConnectionMode();
+        }
+
+        // --- UI & Panel ---
+        function updateUI() {
+            deleteBtn.disabled = !selection;
+            renderPropertiesPanel();
+        }
+
+        function renderPropertiesPanel() {
+             propertiesPanel.innerHTML = '';
+             if (!selection) {
+                 propertiesPanel.innerHTML = `<p id="no-selection" class="text-sm text-gray-500 italic">No item selected.</p>`;
+                 return;
+             }
+             if (selection.type === 'node') {
+                 const node = findNode(selection.id);
+                 propertiesPanel.innerHTML = `<h3 class="font-bold">${node.text} Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Background</label><input type="color" id="prop-bgColor" value="${node.backgroundColor || '#FFFFFF'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Transparent</label><input type="checkbox" id="prop-isTransparent" ${node.isTransparent ? 'checked' : ''}></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Color</label><input type="color" id="prop-lineColor" value="${node.lineColor || '#9ca3af'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Style</label><select id="prop-lineStyle" class="border-gray-300 rounded-md shadow-sm w-24"><option ${node.lineStyle === 'Solid' ? 'selected' : ''}>Solid</option><option ${node.lineStyle === 'Dotted' ? 'selected' : ''}>Dotted</option><option ${node.lineStyle === 'Dashed' ? 'selected' : ''}>Dashed</option></select></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Fixed</label><input type="checkbox" id="prop-isFixed" ${node.isFixed ? 'checked' : ''}></div></div>`;
+                 document.getElementById('prop-bgColor').oninput = (e) => { node.backgroundColor = e.target.value; draw(); saveStateToHistory(); };
+                 document.getElementById('prop-isTransparent').onchange = (e) => { node.isTransparent = e.target.checked; draw(); saveStateToHistory(); };
+                 document.getElementById('prop-lineColor').oninput = (e) => { node.lineColor = e.target.value; draw(); saveStateToHistory(); };
+                 document.getElementById('prop-lineStyle').onchange = (e) => { node.lineStyle = e.target.value; draw(); saveStateToHistory(); };
+                 document.getElementById('prop-isFixed').onchange = (e) => { node.isFixed = e.target.checked; draw(); saveStateToHistory(); };
+             } else if (selection.type === 'link') {
+                  const link = findLink(selection.id);
+                  propertiesPanel.innerHTML = `<h3 class="font-bold">Link Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Link Color</label><input type="color" id="prop-linkColor" value="${link.color || '#6b7280'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Arrow Direction</label><select id="prop-arrowDir" class="border-gray-300 rounded-md shadow-sm"><option value="none" ${link.direction === 'none' ? 'selected' : ''}>None</option><option value="-->" ${link.direction === '-->' ? 'selected' : ''}>--&gt;</option><option value="<--" ${link.direction === '<--' ? 'selected' : ''}>&lt;--</option><option value="<-->" ${link.direction === '<-->' ? 'selected' : ''}>&lt;--&gt;</option></select></div></div>`;
+                  document.getElementById('prop-linkColor').oninput = (e) => { link.color = e.target.value; draw(); saveStateToHistory(); };
+                  document.getElementById('prop-arrowDir').onchange = (e) => { link.direction = e.target.value; draw(); saveStateToHistory(); };
+             }
+        }
+        
+        function addPort(nodeId, side, position) {
+            const port = { id: generateId('port'), text: `P-${nextIds.port}`, nodeId, side, position, color: '#3b82f6', textOffsetX: 15, textOffsetY: 0 };
+            ports.push(port);
+            saveStateToHistory();
+            draw();
+        }
+        
+        deleteBtn.addEventListener('click', () => {
+             if (!selection) return;
+             if (selection.type === 'node') {
+                const idsToDelete = getDescendantIds(selection.id);
+                idsToDelete.push(selection.id);
+                nodes = nodes.filter(n => !idsToDelete.includes(n.id));
+                const portsToDelete = ports.filter(p => idsToDelete.includes(p.nodeId)).map(p => p.id);
+                ports = ports.filter(p => !idsToDelete.includes(p.nodeId));
+                links = links.filter(l => !portsToDelete.includes(l.fromPortId) && !portsToDelete.includes(l.toPortId));
+             } else if (selection.type === 'link') {
+                links = links.filter(l => l.id !== selection.id);
+             } else if (selection.type === 'port' || selection.type === 'portText') {
+                 const portIdToDelete = selection.type === 'port' ? selection.id : selection.portId;
+                 ports = ports.filter(p => p.id !== portIdToDelete);
+                 links = links.filter(l => l.fromPortId !== portIdToDelete && l.toPortId !== portIdToDelete);
+             }
+             selection = null;
+             updateUI();
+             saveStateToHistory();
+             draw();
+        });
+
+        function createTextInput(target, type) {
+            if (activeTextInput) activeTextInput.input.remove();
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = target.text;
+            input.className = 'text-input';
+
+            activeTextInput = { input, target, targetType: type };
+            
+            const pos = type === 'node' ? { x: target.x, y: target.y } : getPortAbsPos(target);
+            const screenX = pos.x * scale + pan.x;
+            const screenY = pos.y * scale + pan.y;
+
+            if (type === 'node') {
+                 input.style.left = `${screenX + 10}px`; input.style.top = `${screenY + 10}px`;
+                 input.style.width = `${target.width * scale - 20}px`; input.style.fontSize = `${14 * scale}px`;
+            } else if (type === 'port') {
+                input.style.left = `${screenX + target.textOffsetX * scale - 20}px`; 
+                input.style.top = `${screenY + target.textOffsetY * scale - 8}px`;
+                input.style.width = `40px`;
+                input.style.fontSize = `${12 * scale}px`;
+            }
+
+            container.appendChild(input);
+            input.focus();
+            input.select();
+            
+            const finishEditing = () => {
+                if (!activeTextInput) return;
+                target.text = input.value;
+                container.removeChild(input);
+                activeTextInput = null;
+                saveStateToHistory();
+                draw();
+            };
+            input.addEventListener('blur', finishEditing);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') input.blur();
+                else if (e.key === 'Escape') { container.removeChild(input); activeTextInput = null; draw(); }
+            });
+            draw();
+        }
+        
+        function createTextInputForNode(node) { createTextInput(node, 'node'); }
+        function createTextInputForPort(port) { createTextInput(port, 'port'); }
+
+
+        addNodeBtn.addEventListener('click', () => {
+            const parent = selection?.type === 'node' ? findNode(selection.id) : null;
+            let newNodeX, newNodeY, parentId = null;
+            if (parent) { newNodeX = parent.x + 20; newNodeY = parent.y + 40; parentId = parent.id; } 
+            else {
+                const topLevelNodes = nodes.filter(n => n.parentId == null).length;
+                newNodeX = 50 + (topLevelNodes % 5) * 20; newNodeY = 50 + (topLevelNodes % 5) * 20;
+            }
+            const node = { id: generateId('node'), text: `Node ${nextIds.node}`, x: newNodeX, y: newNodeY, width: 150, height: 80, parentId, backgroundColor: '#ffffff', lineColor: '#9ca3af', lineStyle: 'Solid' };
+            nodes.push(node);
+            selection = {type: 'node', id: node.id};
+            saveStateToHistory();
+            updateUI();
+            draw();
+        });
+
+        // --- Data & Init ---
+        saveBtn.addEventListener('click', () => {
+            try {
+               const state = { nodes, ports, links, nextIds };
+               dataModelText.value = JSON.stringify(state, null, 2);
+               showAlert('Diagram state saved.');
+           } catch (error) { showAlert(`Error saving state: ${error.message}`); }
+        });
+
+        loadBtn.addEventListener('click', () => {
+            try {
+               const state = JSON.parse(dataModelText.value);
+               if (state && state.nodes && state.ports && state.links && state.nextIds) {
+                   loadState(state);
+                   history = [state];
+                   redoStack = [];
+                   updateUndoRedoButtons();
+                   showAlert('Diagram loaded.');
+               } else { showAlert('Invalid data format.'); }
+           } catch (error) { showAlert(`Error loading state: ${error.message}.`); }
+        });
+        
+        undoBtn.addEventListener('click', undo);
+        redoBtn.addEventListener('click', redo);
+        createPortBtn.addEventListener('click', togglePortCreationMode);
+        connectBtn.addEventListener('click', toggleConnectionMode);
+        document.addEventListener('keydown', (e) => {
+             if (e.key === 'Escape') {
+                 if (isConnectionMode) toggleConnectionMode();
+                 if (isPortCreationMode) togglePortCreationMode();
+                 if (isMovingLinkPoint) {isMovingLinkPoint = false; movingPointInfo = null; draw();}
+             }
+        });
+        closeModalBtn.addEventListener('click', () => { errorModal.style.display = 'none'; });
+        function showAlert(message) { modalMessage.textContent = message; errorModal.style.display = 'flex'; }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        saveStateToHistory(); // Initial state for undo
+        updateUI();
+        draw();
+    });
+    </script>
+</body>
+</html>
