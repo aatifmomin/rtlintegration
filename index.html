@@ -73,6 +73,10 @@
             border: 1px solid rgba(209, 213, 219, 0.8);
             color: #374151;
             transition: background-color 0.2s;
+            height: 40px; /* Enforce same height */
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
         }
         .header-btn:hover:not(:disabled) {
             background-color: rgba(243, 244, 246, 0.8);
@@ -98,11 +102,13 @@
             <div class="flex items-center space-x-2">
                  <button id="undoBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Undo</button>
                  <button id="redoBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Redo</button>
-                 <div class="w-px h-6 bg-gray-300"></div>
+                 <div class="w-px h-8 bg-gray-300"></div>
                  <button id="createPortBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Create Port</button>
                  <button id="connectBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Connect</button>
                  <button id="addNodeBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Add Node</button>
                  <button id="deleteBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Delete</button>
+                 <div class="w-px h-8 bg-gray-300"></div>
+                 <button id="downloadBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Download</button>
             </div>
         </div>
     </header>
@@ -132,6 +138,17 @@
         <div class="custom-modal-content">
             <p id="modalMessage" class="mb-4"></p>
             <button id="closeModalBtn" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg">OK</button>
+        </div>
+    </div>
+    
+    <div id="downloadModal" class="custom-modal">
+        <div class="custom-modal-content">
+            <h3 class="text-lg font-medium mb-4">Download as:</h3>
+            <div class="flex justify-center space-x-4">
+                 <button id="downloadPngBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg">PNG</button>
+                 <button id="downloadJpgBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg">JPG</button>
+            </div>
+             <button id="closeDownloadModalBtn" class="mt-4 text-sm text-gray-600 hover:text-gray-800">Cancel</button>
         </div>
     </div>
 
@@ -173,6 +190,11 @@
         const deleteBtn = document.getElementById('deleteBtn');
         const saveBtn = document.getElementById('saveBtn');
         const loadBtn = document.getElementById('loadBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const downloadModal = document.getElementById('downloadModal');
+        const closeDownloadModalBtn = document.getElementById('closeDownloadModalBtn');
+        const downloadPngBtn = document.getElementById('downloadPngBtn');
+        const downloadJpgBtn = document.getElementById('downloadJpgBtn');
         const dataModelText = document.getElementById('dataModelText');
         const propertiesPanel = document.getElementById('properties-panel');
         const modalMessage = document.getElementById('modalMessage');
@@ -303,7 +325,7 @@
             ctx.translate(pan.x, pan.y);
             ctx.scale(scale, scale);
 
-            drawGrid();
+            drawGrid(ctx);
 
             const selectedNode = selection?.type === 'node' ? findNode(selection.id) : null;
             const hoveredNode = hovered?.type === 'node' ? findNode(hovered.id) : null;
@@ -312,25 +334,25 @@
             sortedNodes.forEach(node => {
                 const isSelected = selectedNode?.id === node.id;
                 const isHovered = hoveredNode?.id === node.id;
-                drawNode(node, isSelected, isHovered);
+                drawNode(ctx, node, isSelected, isHovered);
             });
 
             calculateAllLinkPaths();
-            links.forEach(link => drawLink(link));
+            links.forEach(link => drawLink(ctx, link));
             if (isConnectionMode && connectionPath.length > 0) {
                  const previewPath = getPreviewPath();
-                 drawLinkPath(previewPath, '#3b82f6', true);
+                 drawLinkPath(ctx, previewPath, '#3b82f6', true);
             }
 
-            ports.forEach(port => drawPort(port));
+            ports.forEach(port => drawPort(ctx, port));
 
             if (selectedNode && !activeTextInput && !selectedNode.isFixed) {
-                drawResizeHandles(selectedNode);
+                drawResizeHandles(ctx, selectedNode);
             }
             ctx.restore();
         }
         
-        function drawGrid() {
+        function drawGrid(context) {
             const gridSize = 20;
             const scaledGridSize = gridSize * scale;
             const lineCountX = Math.ceil(canvas.width / scaledGridSize);
@@ -339,192 +361,192 @@
             const startX = -pan.x / scale;
             const startY = -pan.y / scale;
 
-            ctx.strokeStyle = '#e5e7eb';
-            ctx.lineWidth = 1 / scale;
+            context.strokeStyle = '#e5e7eb';
+            context.lineWidth = 1 / scale;
 
-            ctx.beginPath();
+            context.beginPath();
             for (let i = 0; i < lineCountX + 1; i++) {
                 const x = Math.floor(startX / gridSize) * gridSize + i * gridSize;
-                ctx.moveTo(x, startY);
-                ctx.lineTo(x, startY + canvas.height / scale);
+                context.moveTo(x, startY);
+                context.lineTo(x, startY + canvas.height / scale);
             }
              for (let i = 0; i < lineCountY + 1; i++) {
                 const y = Math.floor(startY / gridSize) * gridSize + i * gridSize;
-                ctx.moveTo(startX, y);
-                ctx.lineTo(startX + canvas.width / scale, y);
+                context.moveTo(startX, y);
+                context.lineTo(startX + canvas.width / scale, y);
             }
-            ctx.stroke();
+            context.stroke();
         }
         
-        function drawNode(node, isSelected, isHovered) {
+        function drawNode(context, node, isSelected, isHovered) {
              if (!node.isTransparent) {
-                ctx.fillStyle = node.backgroundColor || '#ffffff';
-                ctx.shadowColor = 'rgba(0,0,0,0.1)';
-                ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
+                context.fillStyle = node.backgroundColor || '#ffffff';
+                context.shadowColor = 'rgba(0,0,0,0.1)';
+                context.shadowBlur = 8; context.shadowOffsetY = 2;
                 
-                ctx.beginPath();
-                ctx.moveTo(node.x + 10, node.y);
-                ctx.lineTo(node.x + node.width - 10, node.y);
-                ctx.quadraticCurveTo(node.x + node.width, node.y, node.x + node.width, node.y + 10);
-                ctx.lineTo(node.x + node.width, node.y + node.height - 10);
-                ctx.quadraticCurveTo(node.x + node.width, node.y + node.height, node.x + node.width - 10, node.y + node.height);
-                ctx.lineTo(node.x + 10, node.y + node.height);
-                ctx.quadraticCurveTo(node.x, node.y + node.height, node.x, node.y + node.height - 10);
-                ctx.lineTo(node.x, node.y + 10);
-                ctx.quadraticCurveTo(node.x, node.y, node.x + 10, node.y);
-                ctx.closePath();
-                ctx.fill();
+                context.beginPath();
+                context.moveTo(node.x + 10, node.y);
+                context.lineTo(node.x + node.width - 10, node.y);
+                context.quadraticCurveTo(node.x + node.width, node.y, node.x + node.width, node.y + 10);
+                context.lineTo(node.x + node.width, node.y + node.height - 10);
+                context.quadraticCurveTo(node.x + node.width, node.y + node.height, node.x + node.width - 10, node.y + node.height);
+                context.lineTo(node.x + 10, node.y + node.height);
+                context.quadraticCurveTo(node.x, node.y + node.height, node.x, node.y + node.height - 10);
+                context.lineTo(node.x, node.y + 10);
+                context.quadraticCurveTo(node.x, node.y, node.x + 10, node.y);
+                context.closePath();
+                context.fill();
 
-                ctx.shadowColor = 'transparent';
+                context.shadowColor = 'transparent';
              }
 
              let strokeStyle = isSelected || (isHovered && !isConnectionMode && !isPortCreationMode) ? '#3b82f6' : (node.lineColor || '#9ca3af');
              if (isPortCreationMode && isHovered) {
                  strokeStyle = '#16a34a'; 
              }
-             ctx.strokeStyle = strokeStyle;
-             ctx.lineWidth = isSelected || (isPortCreationMode && isHovered) ? 3 : 2;
-             if (node.lineStyle === 'Dotted') ctx.setLineDash([2, 4]);
-             else if (node.lineStyle === 'Dashed') ctx.setLineDash([10, 5]);
-             else ctx.setLineDash([]);
+             context.strokeStyle = strokeStyle;
+             context.lineWidth = isSelected || (isPortCreationMode && isHovered) ? 3 : 2;
+             if (node.lineStyle === 'Dotted') context.setLineDash([2, 4]);
+             else if (node.lineStyle === 'Dashed') context.setLineDash([10, 5]);
+             else context.setLineDash([]);
              
-             ctx.beginPath();
-             ctx.moveTo(node.x + 10, node.y);
-             ctx.lineTo(node.x + node.width - 10, node.y);
-             ctx.quadraticCurveTo(node.x + node.width, node.y, node.x + node.width, node.y + 10);
-             ctx.lineTo(node.x + node.width, node.y + node.height - 10);
-             ctx.quadraticCurveTo(node.x + node.width, node.y + node.height, node.x + node.width - 10, node.y + node.height);
-             ctx.lineTo(node.x + 10, node.y + node.height);
-             ctx.quadraticCurveTo(node.x, node.y + node.height, node.x, node.y + node.height - 10);
-             ctx.lineTo(node.x, node.y + 10);
-             ctx.quadraticCurveTo(node.x, node.y, node.x + 10, node.y);
-             ctx.closePath();
+             context.beginPath();
+             context.moveTo(node.x + 10, node.y);
+             context.lineTo(node.x + node.width - 10, node.y);
+             context.quadraticCurveTo(node.x + node.width, node.y, node.x + node.width, node.y + 10);
+             context.lineTo(node.x + node.width, node.y + node.height - 10);
+             context.quadraticCurveTo(node.x + node.width, node.y + node.height, node.x + node.width - 10, node.y + node.height);
+             context.lineTo(node.x + 10, node.y + node.height);
+             context.quadraticCurveTo(node.x, node.y + node.height, node.x, node.y + node.height - 10);
+             context.lineTo(node.x, node.y + 10);
+             context.quadraticCurveTo(node.x, node.y, node.x + 10, node.y);
+             context.closePath();
              
-             ctx.stroke();
-             ctx.setLineDash([]);
+             context.stroke();
+             context.setLineDash([]);
 
              if (!activeTextInput || activeTextInput.targetType !== 'node' || activeTextInput.targetId !== node.id) {
-                 ctx.fillStyle = '#1f2937';
-                 ctx.font = '14px Inter';
-                 ctx.textAlign = 'left';
-                 ctx.textBaseline = 'top';
-                 ctx.fillText(node.text, node.x + 10, node.y + 10);
+                 context.fillStyle = '#1f2937';
+                 context.font = '14px Inter';
+                 context.textAlign = 'left';
+                 context.textBaseline = 'top';
+                 context.fillText(node.text, node.x + 10, node.y + 10);
              }
              if (node.isFixed) {
-                 drawLockIcon(ctx, node.x + node.width - 18, node.y + 5);
+                 drawLockIcon(context, node.x + node.width - 18, node.y + 5);
              }
         }
 
-        function drawPort(port) {
+        function drawPort(context, port) {
             const pos = getPortAbsPos(port);
             if (!pos) return;
             const isHoveredForConnect = isConnectionMode && hovered?.type === 'port' && hovered.id === port.id;
-            ctx.fillStyle = port.color || '#3b82f6';
-            ctx.fillRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
+            context.fillStyle = port.color || '#3b82f6';
+            context.fillRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
             
             if ((hovered?.type === 'port' && hovered.id === port.id && !isConnectionMode) || isHoveredForConnect) {
-                ctx.strokeStyle = isHoveredForConnect ? '#22c55e' : '#2563eb';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
+                context.strokeStyle = isHoveredForConnect ? '#22c55e' : '#2563eb';
+                context.lineWidth = 2;
+                context.strokeRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
             }
             
             if (!activeTextInput || activeTextInput.targetType !== 'port' || activeTextInput.targetId !== port.id) {
-                ctx.fillStyle = '#4b5563';
-                ctx.font = '10px Inter';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(port.text, pos.x + port.textOffsetX, pos.y + port.textOffsetY);
+                context.fillStyle = '#4b5563';
+                context.font = '10px Inter';
+                context.textAlign = 'center';
+                context.textBaseline = 'middle';
+                context.fillText(port.text, pos.x + port.textOffsetX, pos.y + port.textOffsetY);
             }
         }
         
-        function drawLink(link) {
+        function drawLink(context, link) {
             const isSelected = selection?.type === 'link' && selection.id === link.id;
-            drawLinkPath(link.path, link.color || '#6b7280', false, isSelected);
+            drawLinkPath(context, link.path, link.color || '#6b7280', false, isSelected);
             link.jumps.forEach(jump => {
                  const isHorizontal = jump.direction === 'h';
-                 drawJump(jump.pos, isSelected ? 4 : 2, isHorizontal, link.color || '#6b7280');
+                 drawJump(context, jump.pos, isSelected ? 4 : 2, isHorizontal, link.color || '#6b7280');
             });
             if (isSelected) {
-                drawLinkWaypointHandles(link);
+                drawLinkWaypointHandles(context, link);
             }
             if (link.direction && link.direction !== 'none' && link.path.length > 1) {
                 if (link.direction === '-->' || link.direction === '<-->') {
                     const from = link.path[link.path.length - 2];
                     const to = link.path[link.path.length - 1];
-                    drawArrowhead(ctx, from, to, link.color || '#6b7280');
+                    drawArrowhead(context, from, to, link.color || '#6b7280');
                 }
                 if (link.direction === '<--' || link.direction === '<-->') {
                     const from = link.path[1];
                     const to = link.path[0];
-                    drawArrowhead(ctx, from, to, link.color || '#6b7280');
+                    drawArrowhead(context, from, to, link.color || '#6b7280');
                 }
             }
         }
 
-        function drawLinkPath(path, color, isDashed = false, isSelected = false) {
+        function drawLinkPath(context, path, color, isDashed = false, isSelected = false) {
             if (!path || path.length < 2) return;
-            ctx.beginPath();
-            ctx.moveTo(path[0].x, path[0].y);
-            for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = isSelected ? 4 : 2;
-            if (isDashed) ctx.setLineDash([5, 5]);
-            ctx.stroke();
-            if (isDashed) ctx.setLineDash([]);
+            context.beginPath();
+            context.moveTo(path[0].x, path[0].y);
+            for (let i = 1; i < path.length; i++) context.lineTo(path[i].x, path[i].y);
+            context.strokeStyle = color;
+            context.lineWidth = isSelected ? 4 : 2;
+            if (isDashed) context.setLineDash([5, 5]);
+            context.stroke();
+            if (isDashed) context.setLineDash([]);
         }
         
-        function drawArrowhead(ctx, from, to, color) {
+        function drawArrowhead(context, from, to, color) {
             const headlen = 10;
             const angle = Math.atan2(to.y - from.y, to.x - from.x);
-            ctx.save();
-            ctx.strokeStyle = color;
-            ctx.fillStyle = color;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(to.x, to.y);
-            ctx.lineTo(to.x - headlen * Math.cos(angle - Math.PI / 6), to.y - headlen * Math.sin(angle - Math.PI / 6));
-            ctx.lineTo(to.x - headlen * Math.cos(angle + Math.PI / 6), to.y - headlen * Math.sin(angle + Math.PI / 6));
-            ctx.closePath();
-            ctx.stroke();
-            ctx.fill();
-            ctx.restore();
+            context.save();
+            context.strokeStyle = color;
+            context.fillStyle = color;
+            context.lineWidth = 2;
+            context.beginPath();
+            context.moveTo(to.x, to.y);
+            context.lineTo(to.x - headlen * Math.cos(angle - Math.PI / 6), to.y - headlen * Math.sin(angle - Math.PI / 6));
+            context.lineTo(to.x - headlen * Math.cos(angle + Math.PI / 6), to.y - headlen * Math.sin(angle + Math.PI / 6));
+            context.closePath();
+            context.stroke();
+            context.fill();
+            context.restore();
         }
 
-        function drawJump(pos, lineWidth, isHorizontal, lineColor) {
-            ctx.save();
-            ctx.beginPath();
-            if (isHorizontal) ctx.arc(pos.x, pos.y, 5, Math.PI, 0, false);
-            else ctx.arc(pos.x, pos.y, 5, Math.PI * 1.5, Math.PI * 0.5, false);
-            ctx.strokeStyle = '#f9fafb';
-            ctx.lineWidth = lineWidth + 2;
-            ctx.stroke();
-            ctx.beginPath();
-            if (isHorizontal) ctx.arc(pos.x, pos.y, 5, Math.PI, 0, false);
-            else ctx.arc(pos.x, pos.y, 5, Math.PI * 1.5, Math.PI * 0.5, false);
-            ctx.strokeStyle = lineColor;
-            ctx.lineWidth = lineWidth;
-            ctx.stroke();
-            ctx.restore();
+        function drawJump(context, pos, lineWidth, isHorizontal, lineColor) {
+            context.save();
+            context.beginPath();
+            if (isHorizontal) context.arc(pos.x, pos.y, 5, Math.PI, 0, false);
+            else context.arc(pos.x, pos.y, 5, Math.PI * 1.5, Math.PI * 0.5, false);
+            context.strokeStyle = '#f9fafb';
+            context.lineWidth = lineWidth + 2;
+            context.stroke();
+            context.beginPath();
+            if (isHorizontal) context.arc(pos.x, pos.y, 5, Math.PI, 0, false);
+            else context.arc(pos.x, pos.y, 5, Math.PI * 1.5, Math.PI * 0.5, false);
+            context.strokeStyle = lineColor;
+            context.lineWidth = lineWidth;
+            context.stroke();
+            context.restore();
         }
 
-        function drawLockIcon(ctx, x, y) {
-            ctx.save();
-            ctx.strokeStyle = '#6b7280';
-            ctx.fillStyle = '#d1d5db';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.rect(x, y, 10, 7);
-            ctx.fill();
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(x + 2, y);
-            ctx.arc(x + 5, y, 3, Math.PI, 0);
-            ctx.stroke();
-            ctx.restore();
+        function drawLockIcon(context, x, y) {
+            context.save();
+            context.strokeStyle = '#6b7280';
+            context.fillStyle = '#d1d5db';
+            context.lineWidth = 1;
+            context.beginPath();
+            context.rect(x, y, 10, 7);
+            context.fill();
+            context.stroke();
+            context.beginPath();
+            context.moveTo(x + 2, y);
+            context.arc(x + 5, y, 3, Math.PI, 0);
+            context.stroke();
+            context.restore();
         }
 
-        function drawResizeHandles(node) {
-            ctx.fillStyle = '#3b82f6';
+        function drawResizeHandles(context, node) {
+            context.fillStyle = '#3b82f6';
             const handlePositions = {
                 topLeft: { x: node.x, y: node.y }, top: { x: node.x + node.width / 2, y: node.y },
                 topRight: { x: node.x + node.width, y: node.y }, left: { x: node.x, y: node.y + node.height / 2 },
@@ -532,16 +554,16 @@
                 bottom: { x: node.x + node.width / 2, y: node.y + node.height }, bottomRight: { x: node.x + node.width, y: node.y + node.height}
             };
             for (const pos of Object.values(handlePositions)) {
-                ctx.fillRect(pos.x - handleSize / 2, pos.y - handleSize / 2, handleSize, handleSize);
+                context.fillRect(pos.x - handleSize / 2, pos.y - handleSize / 2, handleSize, handleSize);
             }
         }
         
-        function drawLinkWaypointHandles(link) {
+        function drawLinkWaypointHandles(context, link) {
             if (!link || !link.path) return;
-            ctx.fillStyle = '#9333ea'; // Purple
+            context.fillStyle = '#9333ea'; // Purple
             for (let i = 1; i < link.path.length - 1; i++) {
                 const pt = link.path[i];
-                ctx.fillRect(pt.x - 4, pt.y - 4, 8, 8);
+                context.fillRect(pt.x - 4, pt.y - 4, 8, 8);
             }
         }
 
@@ -690,7 +712,7 @@
                     
                     let newX = mousePos.x - dragOffset.offsetX;
                     let newY = mousePos.y - dragOffset.offsetY;
-                    
+
                     const dx = newX - node.x;
                     const dy = newY - node.y;
                     if (dx !== 0 || dy !== 0) {
@@ -798,17 +820,18 @@
             if (isConnectionMode) { handleConnectionClick(); return; }
             if (isPortCreationMode) { handlePortCreationClick(); return; }
             
-            const handleInfo = getResizeHandleAtPos(mousePos, findNode(selection?.id));
+            const item = findItemAtPos(mousePos);
+            const handleInfo = getResizeHandleAtPos(mousePos, item?.type === 'node' ? findNode(item?.id) : null) || getResizeHandleAtPos(mousePos, findNode(selection?.id));
 
             if (handleInfo) {
                 isResizing = true;
+                selection = item || selection;
                 resizingDirection = handleInfo.direction;
                 const node = findNode(selection.id);
                 dragOffset = { startX: mousePos.x, startY: mousePos.y, nodeX: node.x, nodeY: node.y, nodeW: node.width, nodeH: node.height, startWorldX: mousePos.x, startWorldY: mousePos.y };
                 return;
             }
             
-            const item = findItemAtPos(mousePos);
             if (item?.type === 'linkPoint') {
                 isMovingLinkPoint = true;
                 movingPointInfo = item;
@@ -1126,6 +1149,70 @@
            } catch (error) { showAlert(`Error loading state: ${error.message}.`); }
         });
         
+        downloadBtn.addEventListener('click', () => downloadModal.style.display = 'flex');
+        closeDownloadModalBtn.addEventListener('click', () => downloadModal.style.display = 'none');
+        downloadPngBtn.addEventListener('click', () => downloadDiagram('png'));
+        downloadJpgBtn.addEventListener('click', () => downloadDiagram('jpeg'));
+
+
+        function downloadDiagram(format) {
+            downloadModal.style.display = 'none';
+
+            if (nodes.length === 0) return;
+
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            nodes.forEach(node => {
+                minX = Math.min(minX, node.x);
+                minY = Math.min(minY, node.y);
+                maxX = Math.max(maxX, node.x + node.width);
+                maxY = Math.max(maxY, node.y + node.height);
+            });
+            const padding = 20;
+            const bounds = {
+                x: minX - padding,
+                y: minY - padding,
+                width: (maxX - minX) + padding * 2,
+                height: (maxY - minY) + padding * 2,
+            };
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = bounds.width;
+            tempCanvas.height = bounds.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            tempCtx.fillStyle = '#f9fafb';
+            tempCtx.fillRect(0,0, tempCanvas.width, tempCanvas.height);
+            
+            tempCtx.save();
+            tempCtx.translate(-bounds.x, -bounds.y);
+            
+            const originalScale = scale;
+            const originalPan = pan;
+            
+            scale = 1;
+            pan = {x: 0, y: 0};
+
+            const sortedNodes = getSortedNodesForDrawing();
+            sortedNodes.forEach(node => drawNode(tempCtx, node, false, false));
+            links.forEach(link => drawLink(tempCtx, link));
+            ports.forEach(port => drawPort(tempCtx, port));
+
+            scale = originalScale;
+            pan = originalPan;
+
+            tempCtx.restore();
+
+
+            const dataUrl = tempCanvas.toDataURL(`image/${format}`, format === 'jpeg' ? 0.9 : 1.0);
+            const link = document.createElement('a');
+            link.href = dataUrl;
+            link.download = `diagram.${format}`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+
         undoBtn.addEventListener('click', undo);
         redoBtn.addEventListener('click', redo);
         createPortBtn.addEventListener('click', togglePortCreationMode);
