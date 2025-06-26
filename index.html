@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RTL Integration Tool</title>
+    <title>Dynamic Port Connector</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
@@ -98,7 +98,7 @@
 
     <header class="glass-header shadow-md p-4 z-10 border-b border-gray-200">
         <div class="container mx-auto flex justify-between items-center">
-            <h1 class="text-2xl font-bold text-gray-700">RTL Integration Tool</h1>
+            <h1 class="text-2xl font-bold text-gray-700">Interactive Diagram Tool</h1>
             <div class="flex items-center space-x-2">
                  <button id="undoBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Undo</button>
                  <button id="redoBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Redo</button>
@@ -127,8 +127,8 @@
                 <h2 class="text-lg font-semibold mb-3 border-b pb-2">Diagram Data</h2>
                 <textarea id="dataModelText" class="w-full flex-grow border border-gray-300 rounded-md p-2 text-xs font-mono bg-gray-50" spellcheck="false"></textarea>
                 <div class="mt-3 grid grid-cols-2 gap-2">
-                    <button id="saveBtn" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Save State</button>
-                    <button id="loadBtn" class="bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Load State</button>
+                    <button id="copyBtn" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Copy Data</button>
+                    <button id="loadBtn" class="bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Load Data</button>
                 </div>
             </div>
         </div>
@@ -141,6 +141,18 @@
         </div>
     </div>
     
+    <div id="portTypeModal" class="custom-modal">
+        <div class="custom-modal-content">
+            <h3 class="text-lg font-medium mb-4">Select Port Type</h3>
+            <div class="flex justify-center space-x-4">
+                <button id="portInputBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg">Input</button>
+                <button id="portOutputBtn" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg">Output</button>
+                <button id="portBidirBtn" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded-lg">Bidirectional</button>
+            </div>
+             <button id="closePortTypeModalBtn" class="mt-4 text-sm text-gray-600 hover:text-gray-800">Cancel</button>
+        </div>
+    </div>
+
     <div id="downloadModal" class="custom-modal">
         <div class="custom-modal-content">
             <h3 class="text-lg font-medium mb-4">Download as:</h3>
@@ -167,7 +179,7 @@
         let selection = null; let hovered = null;
         let isDragging = false; let isResizing = false; let resizingDirection = null;
         let isConnectionMode = false; let connectionPath = [];
-        let isPortCreationMode = false;
+        let isPortCreationMode = false; let pendingPortType = null;
         let isMovingLinkPoint = false; 
         let isMovingPortText = false;
         let movingPointInfo = null;
@@ -188,7 +200,7 @@
         const connectBtn = document.getElementById('connectBtn');
         const addNodeBtn = document.getElementById('addNodeBtn');
         const deleteBtn = document.getElementById('deleteBtn');
-        const saveBtn = document.getElementById('saveBtn');
+        const copyBtn = document.getElementById('copyBtn');
         const loadBtn = document.getElementById('loadBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         const downloadModal = document.getElementById('downloadModal');
@@ -200,8 +212,23 @@
         const modalMessage = document.getElementById('modalMessage');
         const errorModal = document.getElementById('errorModal');
         const closeModalBtn = document.getElementById('closeModalBtn');
+        const portTypeModal = document.getElementById('portTypeModal');
+        const portInputBtn = document.getElementById('portInputBtn');
+        const portOutputBtn = document.getElementById('portOutputBtn');
+        const portBidirBtn = document.getElementById('portBidirBtn');
+        const closePortTypeModalBtn = document.getElementById('closePortTypeModalBtn');
         
         // --- History Management ---
+        function updateDataModelText() {
+            const state = {
+                nodes: JSON.parse(JSON.stringify(nodes)),
+                ports: JSON.parse(JSON.stringify(ports)),
+                links: JSON.parse(JSON.stringify(links)),
+                nextIds: JSON.parse(JSON.stringify(nextIds)),
+            };
+            dataModelText.value = JSON.stringify(state, null, 2);
+        }
+        
         function saveStateToHistory() {
             const state = {
                 nodes: JSON.parse(JSON.stringify(nodes)),
@@ -212,6 +239,7 @@
             history.push(state);
             redoStack = []; 
             updateUndoRedoButtons();
+            updateDataModelText();
         }
 
         function undo() {
@@ -242,6 +270,8 @@
              selection = null;
              if (saveToHistory) {
                  saveStateToHistory();
+             } else {
+                 updateDataModelText();
              }
              updateUI();
              draw();
@@ -301,7 +331,7 @@
             }
             return null;
         }
-
+        
         function moveNodeAndDescendants(nodeId, dx, dy) {
             const node = findNode(nodeId);
             if (!node) return;
@@ -310,6 +340,7 @@
             const children = nodes.filter(n => n.parentId === nodeId);
             children.forEach(child => moveNodeAndDescendants(child.id, dx, dy));
         }
+
 
         // --- Canvas & Drawing ---
         function resizeCanvas() {
@@ -401,11 +432,11 @@
              }
 
              let strokeStyle = isSelected || (isHovered && !isConnectionMode && !isPortCreationMode) ? '#3b82f6' : (node.lineColor || '#9ca3af');
-             if (isPortCreationMode && isHovered) {
+             if (isPortCreationMode && hovered?.type === 'node') {
                  strokeStyle = '#16a34a'; 
              }
              context.strokeStyle = strokeStyle;
-             context.lineWidth = isSelected || (isPortCreationMode && isHovered) ? 3 : 2;
+             context.lineWidth = isSelected || (isPortCreationMode && hovered?.type === 'node') ? 3 : 2;
              if (node.lineStyle === 'Dotted') context.setLineDash([2, 4]);
              else if (node.lineStyle === 'Dashed') context.setLineDash([10, 5]);
              else context.setLineDash([]);
@@ -487,7 +518,20 @@
             if (!path || path.length < 2) return;
             context.beginPath();
             context.moveTo(path[0].x, path[0].y);
-            for (let i = 1; i < path.length; i++) context.lineTo(path[i].x, path[i].y);
+            
+            const to = path[path.length - 1];
+            const from = path[path.length - 2];
+            const angle = Math.atan2(to.y - from.y, to.x - from.x);
+            const adjustedTo = {
+                x: to.x - (portSize / 2) * Math.cos(angle),
+                y: to.y - (portSize / 2) * Math.sin(angle)
+            };
+
+            for (let i = 1; i < path.length - 1; i++) {
+                context.lineTo(path[i].x, path[i].y);
+            }
+            context.lineTo(adjustedTo.x, adjustedTo.y);
+
             context.strokeStyle = color;
             context.lineWidth = isSelected ? 4 : 2;
             if (isDashed) context.setLineDash([5, 5]);
@@ -496,16 +540,22 @@
         }
         
         function drawArrowhead(context, from, to, color) {
-            const headlen = 10;
+            const headlen = 12;
             const angle = Math.atan2(to.y - from.y, to.x - from.x);
+            
+            const adjustedTo = {
+                x: to.x - (portSize / 2) * Math.cos(angle),
+                y: to.y - (portSize / 2) * Math.sin(angle)
+            };
+
             context.save();
             context.strokeStyle = color;
             context.fillStyle = color;
             context.lineWidth = 2;
             context.beginPath();
-            context.moveTo(to.x, to.y);
-            context.lineTo(to.x - headlen * Math.cos(angle - Math.PI / 6), to.y - headlen * Math.sin(angle - Math.PI / 6));
-            context.lineTo(to.x - headlen * Math.cos(angle + Math.PI / 6), to.y - headlen * Math.sin(angle + Math.PI / 6));
+            context.moveTo(adjustedTo.x, adjustedTo.y);
+            context.lineTo(adjustedTo.x - headlen * Math.cos(angle - Math.PI / 6), adjustedTo.y - headlen * Math.sin(angle - Math.PI / 6));
+            context.lineTo(adjustedTo.x - headlen * Math.cos(angle + Math.PI / 6), adjustedTo.y - headlen * Math.sin(angle + Math.PI / 6));
             context.closePath();
             context.stroke();
             context.fill();
@@ -712,6 +762,14 @@
                     
                     let newX = mousePos.x - dragOffset.offsetX;
                     let newY = mousePos.y - dragOffset.offsetY;
+                    
+                    if (node.parentId !== null) {
+                        const parent = findNode(node.parentId);
+                        if(parent) {
+                            newX = Math.max(parent.x, Math.min(newX, parent.x + parent.width - node.width));
+                            newY = Math.max(parent.y, Math.min(newY, parent.y + parent.height - node.height));
+                        }
+                    }
 
                     const dx = newX - node.x;
                     const dy = newY - node.y;
@@ -724,7 +782,7 @@
                             const toIsMoving = allMovedNodeIds.includes(toNodeId);
 
                             if(fromIsMoving && toIsMoving) {
-                               for (let i = 0; i < link.path.length; i++) {
+                               for (let i = 1; i < link.path.length - 1; i++) {
                                     link.path[i].x += dx;
                                     link.path[i].y += dy;
                                 }
@@ -818,19 +876,25 @@
             }
             
             if (isConnectionMode) { handleConnectionClick(); return; }
-            if (isPortCreationMode) { handlePortCreationClick(); return; }
-            
-            const item = findItemAtPos(mousePos);
-            const handleInfo = getResizeHandleAtPos(mousePos, item?.type === 'node' ? findNode(item?.id) : null) || getResizeHandleAtPos(mousePos, findNode(selection?.id));
-
-            if (handleInfo) {
-                isResizing = true;
-                selection = item || selection;
-                resizingDirection = handleInfo.direction;
-                const node = findNode(selection.id);
-                dragOffset = { startX: mousePos.x, startY: mousePos.y, nodeX: node.x, nodeY: node.y, nodeW: node.width, nodeH: node.height, startWorldX: mousePos.x, startWorldY: mousePos.y };
+            if (isPortCreationMode) {
+                handlePortCreationClick();
                 return;
             }
+            
+            const item = findItemAtPos(mousePos);
+            
+            if (item?.type === 'node') {
+                const handleInfo = getResizeHandleAtPos(mousePos, findNode(item.id));
+                if(handleInfo) {
+                    isResizing = true;
+                    selection = item;
+                    resizingDirection = handleInfo.direction;
+                    const node = findNode(selection.id);
+                    dragOffset = { startX: mousePos.x, startY: mousePos.y, nodeX: node.x, nodeY: node.y, nodeW: node.width, nodeH: node.height, startWorldX: mousePos.x, startWorldY: mousePos.y };
+                    return;
+                }
+            }
+            
             
             if (item?.type === 'linkPoint') {
                 isMovingLinkPoint = true;
@@ -901,10 +965,31 @@
                 draw();
              }
         });
+        
+        document.addEventListener('keydown', (e) => {
+            if (selection?.type === 'port') {
+                const port = findPort(selection.id);
+                let moveAmount = 2 / (port.side === 'top' || port.side === 'bottom' ? findNode(port.nodeId).width : findNode(port.nodeId).height);
+                if (e.key === 'ArrowLeft') port.position -= moveAmount;
+                if (e.key === 'ArrowRight') port.position += moveAmount;
+                if (e.key === 'ArrowUp') port.position -= moveAmount;
+                if (e.key === 'ArrowDown') port.position += moveAmount;
+                port.position = Math.max(0, Math.min(1, port.position));
+                draw();
+            }
+            
+             if (e.key === 'Escape') {
+                 if (isConnectionMode) toggleConnectionMode();
+                 if (isPortCreationMode) {
+                     isPortCreationMode = false;
+                     canvas.style.cursor = 'default';
+                 }
+                 if (isMovingLinkPoint) {isMovingLinkPoint = false; movingPointInfo = null; draw();}
+             }
+        });
 
         // --- Connection/Port Creation Logic ---
         function toggleConnectionMode() {
-            if (isPortCreationMode) togglePortCreationMode(false);
             isConnectionMode = !isConnectionMode;
             connectionPath = [];
             if(isConnectionMode) {
@@ -912,19 +997,6 @@
                 canvas.style.cursor = 'crosshair';
             } else {
                 connectBtn.classList.remove('active');
-                canvas.style.cursor = 'default';
-            }
-            draw();
-        }
-
-         function togglePortCreationMode() {
-            if (isConnectionMode) toggleConnectionMode(false);
-            isPortCreationMode = !isPortCreationMode;
-            if(isPortCreationMode) {
-                createPortBtn.classList.add('active');
-                canvas.style.cursor = 'copy';
-            } else {
-                createPortBtn.classList.remove('active');
                 canvas.style.cursor = 'default';
             }
             draw();
@@ -953,7 +1025,7 @@
                     side = 'right';
                     position = Math.max(0, Math.min(1, (mousePos.y - node.y) / node.height));
                 }
-                addPort(node.id, side, position);
+                addPort(node.id, side, position, pendingPortType);
             }
         }
         
@@ -1020,22 +1092,33 @@
              }
              if (selection.type === 'node') {
                  const node = findNode(selection.id);
-                 propertiesPanel.innerHTML = `<h3 class="font-bold">${node.text} Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Background</label><input type="color" id="prop-bgColor" value="${node.backgroundColor || '#FFFFFF'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Transparent</label><input type="checkbox" id="prop-isTransparent" ${node.isTransparent ? 'checked' : ''}></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Color</label><input type="color" id="prop-lineColor" value="${node.lineColor || '#9ca3af'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Style</label><select id="prop-lineStyle" class="border-gray-300 rounded-md shadow-sm w-24"><option ${node.lineStyle === 'Solid' ? 'selected' : ''}>Solid</option><option ${node.lineStyle === 'Dotted' ? 'selected' : ''}>Dotted</option><option ${node.lineStyle === 'Dashed' ? 'selected' : ''}>Dashed</option></select></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Fixed</label><input type="checkbox" id="prop-isFixed" ${node.isFixed ? 'checked' : ''}></div></div>`;
+                 if (!node) return;
+                 propertiesPanel.innerHTML = `<h3 class="font-bold">${node.text} Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Background</label><input type="color" id="prop-bgColor" value="${node.backgroundColor || '#FFFFFF'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Transparent</label><input type="checkbox" id="prop-isTransparent" ${node.isTransparent ? 'checked' : ''}></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Color</label><input type="color" id="prop-lineColor" value="${node.lineColor || '#9ca3af'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Style</label><select id="prop-lineStyle" class="border-gray-300 rounded-md shadow-sm w-24"><option ${node.lineStyle === 'Solid' ? 'selected' : ''}>Solid</option><option ${node.lineStyle === 'Dotted' ? 'selected' : ''}>Dotted</option><option ${node.lineStyle === 'Dashed' ? 'selected' : ''}>Dashed</option></select></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Fixed</label><input type="checkbox" id="prop-isFixed" ${node.isFixed ? 'checked' : ''}></div><div class="mt-4"><button id="addPortToNodeBtn" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg">Add Port</button></div></div>`;
                  document.getElementById('prop-bgColor').oninput = (e) => { node.backgroundColor = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-isTransparent').onchange = (e) => { node.isTransparent = e.target.checked; draw(); saveStateToHistory(); };
                  document.getElementById('prop-lineColor').oninput = (e) => { node.lineColor = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-lineStyle').onchange = (e) => { node.lineStyle = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-isFixed').onchange = (e) => { node.isFixed = e.target.checked; draw(); saveStateToHistory(); };
+                 document.getElementById('addPortToNodeBtn').onclick = () => { portTypeModal.style.display = 'flex'; };
              } else if (selection.type === 'link') {
                   const link = findLink(selection.id);
+                  if (!link) return;
                   propertiesPanel.innerHTML = `<h3 class="font-bold">Link Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Link Color</label><input type="color" id="prop-linkColor" value="${link.color || '#6b7280'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Arrow Direction</label><select id="prop-arrowDir" class="border-gray-300 rounded-md shadow-sm"><option value="none" ${link.direction === 'none' ? 'selected' : ''}>None</option><option value="-->" ${link.direction === '-->' ? 'selected' : ''}>--&gt;</option><option value="<--" ${link.direction === '<--' ? 'selected' : ''}>&lt;--</option><option value="<-->" ${link.direction === '<-->' ? 'selected' : ''}>&lt;--&gt;</option></select></div></div>`;
                   document.getElementById('prop-linkColor').oninput = (e) => { link.color = e.target.value; draw(); saveStateToHistory(); };
                   document.getElementById('prop-arrowDir').onchange = (e) => { link.direction = e.target.value; draw(); saveStateToHistory(); };
+             } else if(selection.type === 'port' || selection.type === 'portText') {
+                 const port = findPort(selection.id || selection.portId);
+                 if (!port) return;
+                 propertiesPanel.innerHTML = `<h3 class="font-bold">${port.text} Properties</h3><div class="space-y-3 mt-2"></div>`;
              }
         }
         
-        function addPort(nodeId, side, position) {
-            const port = { id: generateId('port'), text: `P-${nextIds.port}`, nodeId, side, position, color: '#3b82f6', textOffsetX: 15, textOffsetY: 0 };
+        function addPort(nodeId, side, position, type) {
+            let color;
+            if(type === 'input') color = '#3b82f6';
+            else if(type === 'output') color = '#16a34a';
+            else if(type === 'bidirectional') color = '#f59e0b';
+            const port = { id: generateId('port'), text: `P-${nextIds.port}`, nodeId, side, position, color, textOffsetX: 15, textOffsetY: 0 };
             ports.push(port);
             saveStateToHistory();
             draw();
@@ -1126,14 +1209,33 @@
             updateUI();
             draw();
         });
+        
+        portInputBtn.addEventListener('click', () => {
+            portTypeModal.style.display = 'none';
+            isPortCreationMode = true;
+            pendingPortType = 'input';
+            canvas.style.cursor = 'copy';
+        });
+        portOutputBtn.addEventListener('click', () => {
+            portTypeModal.style.display = 'none';
+            isPortCreationMode = true;
+            pendingPortType = 'output';
+            canvas.style.cursor = 'copy';
+        });
+        portBidirBtn.addEventListener('click', () => {
+            portTypeModal.style.display = 'none';
+            isPortCreationMode = true;
+            pendingPortType = 'bidirectional';
+            canvas.style.cursor = 'copy';
+        });
+        closePortTypeModalBtn.addEventListener('click', () => portTypeModal.style.display = 'none');
+
 
         // --- Data & Init ---
-        saveBtn.addEventListener('click', () => {
-            try {
-               const state = { nodes, ports, links, nextIds };
-               dataModelText.value = JSON.stringify(state, null, 2);
-               showAlert('Diagram state saved.');
-           } catch (error) { showAlert(`Error saving state: ${error.message}`); }
+        copyBtn.addEventListener('click', () => {
+           dataModelText.select();
+           document.execCommand('copy');
+           showAlert('Diagram data copied to clipboard.');
         });
 
         loadBtn.addEventListener('click', () => {
@@ -1144,8 +1246,8 @@
                    history = [state];
                    redoStack = [];
                    updateUndoRedoButtons();
-                   showAlert('Diagram loaded.');
-               } else { showAlert('Invalid data format.'); }
+                   showAlert('Diagram loaded from text area.');
+               } else { showAlert('Invalid data format in text area.'); }
            } catch (error) { showAlert(`Error loading state: ${error.message}.`); }
         });
         
@@ -1215,12 +1317,14 @@
 
         undoBtn.addEventListener('click', undo);
         redoBtn.addEventListener('click', redo);
-        createPortBtn.addEventListener('click', togglePortCreationMode);
         connectBtn.addEventListener('click', toggleConnectionMode);
         document.addEventListener('keydown', (e) => {
              if (e.key === 'Escape') {
                  if (isConnectionMode) toggleConnectionMode();
-                 if (isPortCreationMode) togglePortCreationMode();
+                 if (isPortCreationMode) {
+                     isPortCreationMode = false;
+                     canvas.style.cursor = 'default';
+                 }
                  if (isMovingLinkPoint) {isMovingLinkPoint = false; movingPointInfo = null; draw();}
              }
         });
