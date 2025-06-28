@@ -106,6 +106,7 @@
                  <button id="createPortBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Create Port</button>
                  <button id="connectBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Connect</button>
                  <button id="addNodeBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Add Node</button>
+                 <button id="addComponentBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Add Component</button>
                  <button id="deleteBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Delete</button>
                  <div class="w-px h-8 bg-gray-300"></div>
                  <button id="downloadBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Download</button>
@@ -129,6 +130,10 @@
                 <div class="mt-3 grid grid-cols-2 gap-2">
                     <button id="copyBtn" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Copy Data</button>
                     <button id="loadBtn" class="bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Load Data</button>
+                </div>
+                 <div class="mt-3 space-y-2">
+                    <input type="text" id="componentName" placeholder="Component File Name" class="w-full border border-gray-300 rounded-md p-2 text-sm">
+                    <button id="createComponentBtn" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Create Component</button>
                 </div>
             </div>
         </div>
@@ -199,6 +204,7 @@
         const createPortBtn = document.getElementById('createPortBtn');
         const connectBtn = document.getElementById('connectBtn');
         const addNodeBtn = document.getElementById('addNodeBtn');
+        const addComponentBtn = document.getElementById('addComponentBtn');
         const deleteBtn = document.getElementById('deleteBtn');
         const copyBtn = document.getElementById('copyBtn');
         const loadBtn = document.getElementById('loadBtn');
@@ -217,7 +223,69 @@
         const portOutputBtn = document.getElementById('portOutputBtn');
         const portBidirBtn = document.getElementById('portBidirBtn');
         const closePortTypeModalBtn = document.getElementById('closePortTypeModalBtn');
+        const componentNameInput = document.getElementById('componentName');
+        const createComponentBtn = document.getElementById('createComponentBtn');
         
+        // --- Core Data Functions ---
+        function generateId(type) { return nextIds[type]++; }
+        function findNode(id) { return nodes.find(n => n.id === id); }
+        function findPort(id) { return ports.find(p => p.id === id); }
+        function findLink(id) { return links.find(l => l.id === id); }
+        
+        function moveNodeAndDescendants(nodeId, dx, dy) {
+            const node = findNode(nodeId);
+            if (!node) return;
+            node.x += dx;
+            node.y += dy;
+            const children = nodes.filter(n => n.parentId === nodeId);
+            children.forEach(child => moveNodeAndDescendants(child.id, dx, dy));
+        }
+        
+        function getDescendantIds(parentId) {
+            let childrenIds = [];
+            const directChildren = nodes.filter(n => n.parentId === parentId);
+            for (const child of directChildren) {
+                childrenIds.push(child.id);
+                childrenIds = childrenIds.concat(getDescendantIds(child.id));
+            }
+            return childrenIds;
+        }
+
+        function getPortAbsPos(port) {
+            if (!port) return null;
+            const node = findNode(port.nodeId);
+            if (!node) return null;
+            switch (port.side) {
+                case 'top': return { x: node.x + node.width * port.position, y: node.y };
+                case 'bottom': return { x: node.x + node.width * port.position, y: node.y + node.height };
+                case 'left': return { x: node.x, y: node.y + node.height * port.position };
+                case 'right': return { x: node.x + node.width, y: node.y + node.height * port.position };
+            }
+            return null;
+        }
+        
+        function getResizeHandleAtPos(pos, node) {
+            if (!node || node.isFixed) return null;
+            const handles = {
+                topLeft: { x: node.x, y: node.y, cursor: 'nwse-resize' },
+                top: { x: node.x + node.width / 2, y: node.y, cursor: 'ns-resize' },
+                topRight: { x: node.x + node.width, y: node.y, cursor: 'nesw-resize' },
+                left: { x: node.x, y: node.y + node.height / 2, cursor: 'ew-resize' },
+                right: { x: node.x + node.width, y: node.y + node.height / 2, cursor: 'ew-resize' },
+                bottomLeft: { x: node.x, y: node.y + node.height, cursor: 'nesw-resize' },
+                bottom: { x: node.x + node.width / 2, y: node.y + node.height, cursor: 'ns-resize' },
+                bottomRight: { x: node.x + node.width, y: node.y + node.height, cursor: 'nwse-resize' },
+            };
+            for (const [direction, handlePos] of Object.entries(handles)) {
+                const hx = handlePos.x - handleSize / 2;
+                const hy = handlePos.y - handleSize / 2;
+                if (pos.x >= hx && pos.x <= hx + handleSize && pos.y >= hy && pos.y <= hy + handleSize) {
+                    return { direction, cursor: handlePos.cursor };
+                }
+            }
+            return null;
+        }
+
         // --- History Management ---
         function updateDataModelText() {
             const state = {
@@ -281,66 +349,6 @@
             undoBtn.disabled = history.length <= 1;
             redoBtn.disabled = redoStack.length === 0;
         }
-
-        // --- Core Data Functions ---
-        function generateId(type) { return nextIds[type]++; }
-        function findNode(id) { return nodes.find(n => n.id === id); }
-        function findPort(id) { return ports.find(p => p.id === id); }
-        function findLink(id) { return links.find(l => l.id === id); }
-        function getDescendantIds(parentId) {
-            let childrenIds = [];
-            const directChildren = nodes.filter(n => n.parentId === parentId);
-            for (const child of directChildren) {
-                childrenIds.push(child.id);
-                childrenIds = childrenIds.concat(getDescendantIds(child.id));
-            }
-            return childrenIds;
-        }
-
-        function getPortAbsPos(port) {
-            if (!port) return null;
-            const node = findNode(port.nodeId);
-            if (!node) return null;
-            switch (port.side) {
-                case 'top': return { x: node.x + node.width * port.position, y: node.y };
-                case 'bottom': return { x: node.x + node.width * port.position, y: node.y + node.height };
-                case 'left': return { x: node.x, y: node.y + node.height * port.position };
-                case 'right': return { x: node.x + node.width, y: node.y + node.height * port.position };
-            }
-            return null;
-        }
-        
-        function getResizeHandleAtPos(pos, node) {
-            if (!node || node.isFixed) return null;
-            const handles = {
-                topLeft: { x: node.x, y: node.y, cursor: 'nwse-resize' },
-                top: { x: node.x + node.width / 2, y: node.y, cursor: 'ns-resize' },
-                topRight: { x: node.x + node.width, y: node.y, cursor: 'nesw-resize' },
-                left: { x: node.x, y: node.y + node.height / 2, cursor: 'ew-resize' },
-                right: { x: node.x + node.width, y: node.y + node.height / 2, cursor: 'ew-resize' },
-                bottomLeft: { x: node.x, y: node.y + node.height, cursor: 'nesw-resize' },
-                bottom: { x: node.x + node.width / 2, y: node.y + node.height, cursor: 'ns-resize' },
-                bottomRight: { x: node.x + node.width, y: node.y + node.height, cursor: 'nwse-resize' },
-            };
-            for (const [direction, handlePos] of Object.entries(handles)) {
-                const hx = handlePos.x - handleSize / 2;
-                const hy = handlePos.y - handleSize / 2;
-                if (pos.x >= hx && pos.x <= hx + handleSize && pos.y >= hy && pos.y <= hy + handleSize) {
-                    return { direction, cursor: handlePos.cursor };
-                }
-            }
-            return null;
-        }
-        
-        function moveNodeAndDescendants(nodeId, dx, dy) {
-            const node = findNode(nodeId);
-            if (!node) return;
-            node.x += dx;
-            node.y += dy;
-            const children = nodes.filter(n => n.parentId === nodeId);
-            children.forEach(child => moveNodeAndDescendants(child.id, dx, dy));
-        }
-
 
         // --- Canvas & Drawing ---
         function resizeCanvas() {
@@ -471,12 +479,25 @@
         function drawPort(context, port) {
             const pos = getPortAbsPos(port);
             if (!pos) return;
-            const isHoveredForConnect = isConnectionMode && hovered?.type === 'port' && hovered.id === port.id;
+            let isHoveredForConnect = isConnectionMode && hovered?.type === 'port' && hovered.id === port.id;
+            
             context.fillStyle = port.color || '#3b82f6';
             context.fillRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
             
-            if ((hovered?.type === 'port' && hovered.id === port.id && !isConnectionMode) || isHoveredForConnect) {
-                context.strokeStyle = isHoveredForConnect ? '#22c55e' : '#2563eb';
+            if(isConnectionMode && connectionPath.length > 0 && hovered?.type === 'port') {
+                const startPort = connectionPath[0].port;
+                const endPort = findPort(hovered.id);
+                if (isConnectionValid(startPort, endPort)) {
+                    context.strokeStyle = '#22c55e'; // Green for valid
+                } else {
+                    context.strokeStyle = '#ef4444'; // Red for invalid
+                }
+                 if(isHoveredForConnect) {
+                    context.lineWidth = 2;
+                    context.strokeRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
+                }
+            } else if ((hovered?.type === 'port' && hovered.id === port.id && !isConnectionMode)) {
+                context.strokeStyle = '#2563eb';
                 context.lineWidth = 2;
                 context.strokeRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
             }
@@ -492,11 +513,48 @@
         
         function drawLink(context, link) {
             const isSelected = selection?.type === 'link' && selection.id === link.id;
-            drawLinkPath(context, link.path, link.color || '#6b7280', false, isSelected);
+            const color = link.color || '#6b7280';
+            const lineWidth = isSelected ? 4 : 2;
+
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            
+            // Draw path with gaps for jumps
+            context.beginPath();
+            context.moveTo(link.path[0].x, link.path[0].y);
+            for (let i = 0; i < link.path.length - 1; i++) {
+                const p1 = { ...link.path[i] };
+                const p2 = { ...link.path[i + 1] };
+                
+                const isHorizontal = Math.abs(p1.y - p2.y) < 0.1;
+                const jumpsOnSegment = link.jumps.filter(jump => 
+                    isHorizontal && 
+                    Math.abs(jump.pos.y - p1.y) < 1 &&
+                    jump.pos.x > Math.min(p1.x, p2.x) && 
+                    jump.pos.x < Math.max(p1.x, p2.x)
+                ).sort((a,b) => (p1.x < p2.x ? a.pos.x - b.pos.x : b.pos.x - a.pos.x));
+
+                if (jumpsOnSegment.length > 0) {
+                    let currentPoint = p1;
+                    jumpsOnSegment.forEach(jump => {
+                        context.lineTo(jump.pos.x - 5, currentPoint.y);
+                        context.moveTo(jump.pos.x + 5, currentPoint.y);
+                        currentPoint = {x: jump.pos.x + 5, y: currentPoint.y};
+                    });
+                    context.lineTo(p2.x, p2.y);
+                } else {
+                    context.lineTo(p2.x, p2.y);
+                }
+            }
+            context.stroke();
+
+            // Draw jump arcs
             link.jumps.forEach(jump => {
-                 const isHorizontal = jump.direction === 'h';
-                 drawJump(context, jump.pos, isSelected ? 4 : 2, isHorizontal, link.color || '#6b7280');
+                 context.beginPath();
+                 context.arc(jump.pos.x, jump.pos.y, 5, Math.PI, 0, false);
+                 context.stroke();
             });
+
             if (isSelected) {
                 drawLinkWaypointHandles(context, link);
             }
@@ -660,30 +718,46 @@
             if (!link1.path || !link2.path) return;
             for (let i = 0; i < link1.path.length - 1; i++) {
                 for (let j = 0; j < link2.path.length - 1; j++) {
-                    const intersection = getLineIntersection(link1.path[i], link1.path[i + 1], link2.path[j], link2.path[j+1]);
+                    const p1 = link1.path[i];
+                    const p2 = link1.path[i+1];
+                    const p3 = link2.path[j];
+                    const p4 = link2.path[j+1];
+
+                    const intersection = getLineIntersection(p1, p2, p3, p4);
+
                     if (intersection) {
-                        const isLink1Horizontal = link1.path[i].y === link1.path[i+1].y;
-                        if(isLink1Horizontal) link1.jumps.push({pos: intersection, direction: 'h'});
-                        else link2.jumps.push({pos: intersection, direction: 'v'});
+                        const isLink1Horizontal = Math.abs(p1.y - p2.y) < 0.1;
+                        if (isLink1Horizontal) {
+                            if (!link1.jumps.some(jump => Math.abs(jump.pos.x - intersection.x) < 1 && Math.abs(jump.pos.y - intersection.y) < 1)) {
+                                link1.jumps.push({ pos: intersection, direction: 'h' });
+                            }
+                        } else {
+                            if (!link2.jumps.some(jump => Math.abs(jump.pos.x - intersection.x) < 1 && Math.abs(jump.pos.y - intersection.y) < 1)) {
+                                link2.jumps.push({ pos: intersection, direction: 'h' });
+                            }
+                        }
                     }
                 }
             }
         }
-        
+
         function getLineIntersection(p1, p2, p3, p4) {
-             const isP1P2Horizontal = p1.y === p2.y;
-             const isP3P4Horizontal = p3.y === p4.y;
-             if (isP1P2Horizontal === isP3P4Horizontal) return null;
-
-             const h1 = isP1P2Horizontal ? p1 : p3; const h2 = isP1P2Horizontal ? p2 : p4;
-             const v1 = isP1P2Horizontal ? p3 : p1; const v2 = isP1P2Horizontal ? p4 : p2;
-
-             const margin = 1; 
-             if (v1.x > Math.min(h1.x, h2.x) + margin && v1.x < Math.max(h1.x, h2.x) - margin &&
-                 h1.y > Math.min(v1.y, v2.y) + margin && h1.y < Math.max(v1.y, v2.y) - margin) {
-                 return { x: v1.x, y: h1.y };
-             }
-             return null;
+          const den = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+          if (den === 0) {
+            return null; // Lines are parallel or collinear
+          }
+        
+          const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / den;
+          const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / den;
+          
+          const margin = 0.001; 
+          if (t > margin && t < (1-margin) && u > margin && u < (1-margin)) {
+            const ix = p1.x + t * (p2.x - p1.x);
+            const iy = p1.y + t * (p2.y - p1.y);
+            return { x: ix, y: iy };
+          }
+          
+          return null; 
         }
         
         function distToSegment(p, v, w) {
@@ -774,21 +848,6 @@
                     const dx = newX - node.x;
                     const dy = newY - node.y;
                     if (dx !== 0 || dy !== 0) {
-                        const allMovedNodeIds = [selection.id, ...getDescendantIds(selection.id)];
-                        links.forEach(link => {
-                            const fromNodeId = findPort(link.fromPortId)?.nodeId;
-                            const toNodeId = findPort(link.toPortId)?.nodeId;
-                            const fromIsMoving = allMovedNodeIds.includes(fromNodeId);
-                            const toIsMoving = allMovedNodeIds.includes(toNodeId);
-
-                            if(fromIsMoving && toIsMoving) {
-                               for (let i = 1; i < link.path.length - 1; i++) {
-                                    link.path[i].x += dx;
-                                    link.path[i].y += dy;
-                                }
-                            }
-                        });
-                        
                         moveNodeAndDescendants(selection.id, dx, dy);
                     }
                 } else {
@@ -982,6 +1041,7 @@
                  if (isConnectionMode) toggleConnectionMode();
                  if (isPortCreationMode) {
                      isPortCreationMode = false;
+                     createPortBtn.classList.remove('active');
                      canvas.style.cursor = 'default';
                  }
                  if (isMovingLinkPoint) {isMovingLinkPoint = false; movingPointInfo = null; draw();}
@@ -1029,11 +1089,20 @@
             }
         }
         
+        function isConnectionValid(sourcePort, targetPort) {
+            if (!sourcePort || !targetPort || sourcePort.nodeId === targetPort.nodeId) return false;
+            
+            if (sourcePort.nature === 'bidirectional' || targetPort.nature === 'bidirectional') return true;
+            
+            return (sourcePort.nature === 'input' && targetPort.nature === 'output') || 
+                   (sourcePort.nature === 'output' && targetPort.nature === 'input');
+        }
+        
         function handleConnectionClick() {
             if (connectionPath.length === 0) { // Start
                 if (hovered?.type === 'port') {
                     const startPort = findPort(hovered.id);
-                    connectionPath.push({portId: startPort.id, pos: getPortAbsPos(startPort)});
+                    connectionPath.push({port: startPort, pos: getPortAbsPos(startPort)});
                 }
             } else { // Continue or end
                 const lastPoint = connectionPath[connectionPath.length - 1];
@@ -1044,11 +1113,16 @@
 
                 if (dx > dy) newPoint.y = lastPoint.pos.y; else newPoint.x = lastPoint.pos.x;
                 
-                if (hovered?.type === 'port' && hovered.id !== connectionPath[0].portId) {
+                if (hovered?.type === 'port' && hovered.id !== connectionPath[0].port.id) {
+                    const startPort = connectionPath[0].port;
                     const endPort = findPort(hovered.id);
-                    connectionPath.push({pos: newPoint});
-                    connectionPath.push({portId: endPort.id, pos: getPortAbsPos(endPort)});
-                    finalizeConnection();
+                    if (isConnectionValid(startPort, endPort)) {
+                        connectionPath.push({pos: newPoint});
+                        connectionPath.push({port: endPort, pos: getPortAbsPos(endPort)});
+                        finalizeConnection();
+                    } else {
+                        showAlert("Invalid Connection: Ports are not compatible.");
+                    }
                 } else {
                     connectionPath.push({pos: newPoint});
                 }
@@ -1070,8 +1144,8 @@
 
         function finalizeConnection() {
             if (connectionPath.length < 2) { toggleConnectionMode(); return; }
-            const fromPortId = connectionPath[0].portId;
-            const toPortId = connectionPath[connectionPath.length - 1].portId;
+            const fromPortId = connectionPath[0].port.id;
+            const toPortId = connectionPath[connectionPath.length - 1].port.id;
             const finalPath = connectionPath.map(p => p.pos);
             links.push({ id: generateId('link'), fromPortId, toPortId, color: '#6b7280', path: finalPath, jumps: [], direction: 'none' });
             saveStateToHistory();
@@ -1093,13 +1167,12 @@
              if (selection.type === 'node') {
                  const node = findNode(selection.id);
                  if (!node) return;
-                 propertiesPanel.innerHTML = `<h3 class="font-bold">${node.text} Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Background</label><input type="color" id="prop-bgColor" value="${node.backgroundColor || '#FFFFFF'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Transparent</label><input type="checkbox" id="prop-isTransparent" ${node.isTransparent ? 'checked' : ''}></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Color</label><input type="color" id="prop-lineColor" value="${node.lineColor || '#9ca3af'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Style</label><select id="prop-lineStyle" class="border-gray-300 rounded-md shadow-sm w-24"><option ${node.lineStyle === 'Solid' ? 'selected' : ''}>Solid</option><option ${node.lineStyle === 'Dotted' ? 'selected' : ''}>Dotted</option><option ${node.lineStyle === 'Dashed' ? 'selected' : ''}>Dashed</option></select></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Fixed</label><input type="checkbox" id="prop-isFixed" ${node.isFixed ? 'checked' : ''}></div><div class="mt-4"><button id="addPortToNodeBtn" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg">Add Port</button></div></div>`;
+                 propertiesPanel.innerHTML = `<h3 class="font-bold">${node.text} Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Background</label><input type="color" id="prop-bgColor" value="${node.backgroundColor || '#FFFFFF'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Transparent</label><input type="checkbox" id="prop-isTransparent" ${node.isTransparent ? 'checked' : ''}></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Color</label><input type="color" id="prop-lineColor" value="${node.lineColor || '#9ca3af'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Style</label><select id="prop-lineStyle" class="border-gray-300 rounded-md shadow-sm w-24"><option ${node.lineStyle === 'Solid' ? 'selected' : ''}>Solid</option><option ${node.lineStyle === 'Dotted' ? 'selected' : ''}>Dotted</option><option ${node.lineStyle === 'Dashed' ? 'selected' : ''}>Dashed</option></select></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Fixed</label><input type="checkbox" id="prop-isFixed" ${node.isFixed ? 'checked' : ''}></div></div>`;
                  document.getElementById('prop-bgColor').oninput = (e) => { node.backgroundColor = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-isTransparent').onchange = (e) => { node.isTransparent = e.target.checked; draw(); saveStateToHistory(); };
                  document.getElementById('prop-lineColor').oninput = (e) => { node.lineColor = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-lineStyle').onchange = (e) => { node.lineStyle = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-isFixed').onchange = (e) => { node.isFixed = e.target.checked; draw(); saveStateToHistory(); };
-                 document.getElementById('addPortToNodeBtn').onclick = () => { portTypeModal.style.display = 'flex'; };
              } else if (selection.type === 'link') {
                   const link = findLink(selection.id);
                   if (!link) return;
@@ -1118,7 +1191,7 @@
             if(type === 'input') color = '#3b82f6';
             else if(type === 'output') color = '#16a34a';
             else if(type === 'bidirectional') color = '#f59e0b';
-            const port = { id: generateId('port'), text: `P-${nextIds.port}`, nodeId, side, position, color, textOffsetX: 15, textOffsetY: 0 };
+            const port = { id: generateId('port'), text: `P-${nextIds.port}`, nodeId, side, position, color, nature: type, textOffsetX: 15, textOffsetY: 0 };
             ports.push(port);
             saveStateToHistory();
             draw();
@@ -1210,6 +1283,10 @@
             draw();
         });
         
+        createPortBtn.addEventListener('click', () => {
+            portTypeModal.style.display = 'flex';
+        });
+
         portInputBtn.addEventListener('click', () => {
             portTypeModal.style.display = 'none';
             isPortCreationMode = true;
@@ -1251,6 +1328,26 @@
            } catch (error) { showAlert(`Error loading state: ${error.message}.`); }
         });
         
+        createComponentBtn.addEventListener('click', () => {
+            const fileName = componentNameInput.value;
+            if (!fileName) {
+                showAlert('Please enter a file name for the component.');
+                return;
+            }
+            
+            const data = dataModelText.value;
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName.endsWith('.json') ? fileName : `${fileName}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showAlert(`Component file '${a.download}' created.`);
+        });
+
         downloadBtn.addEventListener('click', () => downloadModal.style.display = 'flex');
         closeDownloadModalBtn.addEventListener('click', () => downloadModal.style.display = 'none');
         downloadPngBtn.addEventListener('click', () => downloadDiagram('png'));
@@ -1314,6 +1411,92 @@
             document.body.removeChild(link);
         }
 
+        addComponentBtn.addEventListener('click', () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const componentData = JSON.parse(event.target.result);
+                        if (componentData && componentData.nodes && componentData.ports && componentData.links) {
+                            mergeComponent(componentData, selection?.type === 'node' ? selection.id : null);
+                        } else {
+                            showAlert('Invalid component file format.');
+                        }
+                    } catch (err) {
+                        showAlert(`Error parsing component file: ${err.message}`);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        });
+        
+        function mergeComponent(componentData, parentId = null) {
+            const nodeOffset = nextIds.node;
+            const portOffset = nextIds.port;
+            const linkOffset = nextIds.link;
+
+            const idMap = {};
+            const parentNode = parentId !== null ? findNode(parentId) : null;
+
+            let basePosition;
+            if(parentNode){
+                basePosition = {x: parentNode.x + 20, y: parentNode.y + 40};
+            } else {
+                const viewCenterX = (canvas.width/2 - pan.x)/scale;
+                const viewCenterY = (canvas.height/2 - pan.y)/scale;
+                basePosition = { x: viewCenterX, y: viewCenterY};
+            }
+
+            let minX = Infinity, minY = Infinity;
+            if (componentData.nodes.length > 0) {
+                minX = Math.min(...componentData.nodes.map(n => n.x));
+                minY = Math.min(...componentData.nodes.map(n => n.y));
+            }
+
+            componentData.nodes.forEach(node => {
+                const oldId = node.id;
+                const newId = node.id + nodeOffset;
+                idMap[oldId] = newId;
+                node.id = newId;
+
+                node.x = basePosition.x + (node.x - minX);
+                node.y = basePosition.y + (node.y - minY);
+
+                if (node.parentId !== null) {
+                    node.parentId = idMap[node.parentId];
+                } else if (parentNode) {
+                    node.parentId = parentId;
+                }
+                nodes.push(node);
+            });
+            nextIds.node += componentData.nodes.length;
+            
+            componentData.ports.forEach(port => {
+                port.id += portOffset;
+                port.nodeId = idMap[port.nodeId];
+                ports.push(port);
+            });
+            nextIds.port += componentData.ports.length;
+
+            componentData.links.forEach(link => {
+                link.id += linkOffset;
+                link.fromPortId += portOffset;
+                link.toPortId += portOffset;
+                links.push(link);
+            });
+            nextIds.link += componentData.links.length;
+            
+            saveStateToHistory();
+            draw();
+        }
+
 
         undoBtn.addEventListener('click', undo);
         redoBtn.addEventListener('click', redo);
@@ -1323,6 +1506,7 @@
                  if (isConnectionMode) toggleConnectionMode();
                  if (isPortCreationMode) {
                      isPortCreationMode = false;
+                     createPortBtn.classList.remove('active');
                      canvas.style.cursor = 'default';
                  }
                  if (isMovingLinkPoint) {isMovingLinkPoint = false; movingPointInfo = null; draw();}
