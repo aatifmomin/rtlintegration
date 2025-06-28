@@ -103,11 +103,15 @@
                  <button id="undoBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Undo</button>
                  <button id="redoBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Redo</button>
                  <div class="w-px h-8 bg-gray-300"></div>
+                 <button id="selectBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Select</button>
                  <button id="createPortBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Create Port</button>
                  <button id="connectBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Connect</button>
                  <button id="addNodeBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Add Node</button>
                  <button id="addComponentBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Add Component</button>
+                 <div class="w-px h-8 bg-gray-300"></div>
                  <button id="deleteBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Delete</button>
+                 <button id="copyBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Copy</button>
+                 <button id="pasteBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm" disabled>Paste</button>
                  <div class="w-px h-8 bg-gray-300"></div>
                  <button id="downloadBtn" class="header-btn font-semibold py-2 px-4 rounded-lg shadow-sm">Download</button>
             </div>
@@ -128,7 +132,7 @@
                 <h2 class="text-lg font-semibold mb-3 border-b pb-2">Diagram Data</h2>
                 <textarea id="dataModelText" class="w-full flex-grow border border-gray-300 rounded-md p-2 text-xs font-mono bg-gray-50" spellcheck="false"></textarea>
                 <div class="mt-3 grid grid-cols-2 gap-2">
-                    <button id="copyBtn" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Copy Data</button>
+                    <button id="copyBtnData" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Copy Data</button>
                     <button id="loadBtn" class="bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg shadow-sm transition-colors">Load Data</button>
                 </div>
                  <div class="mt-3 space-y-2">
@@ -179,12 +183,14 @@
         let nodes = []; let ports = []; let links = [];
         let nextIds = { node: 0, port: 0, link: 0 };
         let history = []; let redoStack = [];
+        let clipboard = null;
 
         // --- State ---
-        let selection = null; let hovered = null;
+        let selection = []; let hovered = null;
         let isDragging = false; let isResizing = false; let resizingDirection = null;
         let isConnectionMode = false; let connectionPath = [];
         let isPortCreationMode = false; let pendingPortType = null;
+        let isSelectionMode = false; let selectionRect = { x: 0, y: 0, width: 0, height: 0, active: false };
         let isMovingLinkPoint = false; 
         let isMovingPortText = false;
         let movingPointInfo = null;
@@ -201,13 +207,14 @@
         // --- DOM Elements ---
         const undoBtn = document.getElementById('undoBtn');
         const redoBtn = document.getElementById('redoBtn');
+        const selectBtn = document.getElementById('selectBtn');
         const createPortBtn = document.getElementById('createPortBtn');
         const connectBtn = document.getElementById('connectBtn');
         const addNodeBtn = document.getElementById('addNodeBtn');
         const addComponentBtn = document.getElementById('addComponentBtn');
         const deleteBtn = document.getElementById('deleteBtn');
         const copyBtn = document.getElementById('copyBtn');
-        const loadBtn = document.getElementById('loadBtn');
+        const pasteBtn = document.getElementById('pasteBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         const downloadModal = document.getElementById('downloadModal');
         const closeDownloadModalBtn = document.getElementById('closeDownloadModalBtn');
@@ -225,6 +232,7 @@
         const closePortTypeModalBtn = document.getElementById('closePortTypeModalBtn');
         const componentNameInput = document.getElementById('componentName');
         const createComponentBtn = document.getElementById('createComponentBtn');
+        const copyBtnData = document.getElementById('copyBtnData');
         
         // --- Core Data Functions ---
         function generateId(type) { return nextIds[type]++; }
@@ -232,13 +240,19 @@
         function findPort(id) { return ports.find(p => p.id === id); }
         function findLink(id) { return links.find(l => l.id === id); }
         
-        function moveNodeAndDescendants(nodeId, dx, dy) {
+        function moveNodeAndDescendants(nodeId, dx, dy, movedSet) {
+            if (movedSet.has(nodeId)) return;
+            movedSet.add(nodeId);
+            
             const node = findNode(nodeId);
             if (!node) return;
             node.x += dx;
             node.y += dy;
+            
             const children = nodes.filter(n => n.parentId === nodeId);
-            children.forEach(child => moveNodeAndDescendants(child.id, dx, dy));
+            children.forEach(child => {
+                moveNodeAndDescendants(child.id, dx, dy, movedSet);
+            });
         }
         
         function getDescendantIds(parentId) {
@@ -335,7 +349,7 @@
              ports = state.ports;
              links = state.links;
              nextIds = state.nextIds;
-             selection = null;
+             selection = [];
              if (saveToHistory) {
                  saveStateToHistory();
              } else {
@@ -366,12 +380,11 @@
 
             drawGrid(ctx);
 
-            const selectedNode = selection?.type === 'node' ? findNode(selection.id) : null;
             const hoveredNode = hovered?.type === 'node' ? findNode(hovered.id) : null;
             
             const sortedNodes = getSortedNodesForDrawing();
             sortedNodes.forEach(node => {
-                const isSelected = selectedNode?.id === node.id;
+                const isSelected = selection.some(item => item.id === node.id && item.type === 'node');
                 const isHovered = hoveredNode?.id === node.id;
                 drawNode(ctx, node, isSelected, isHovered);
             });
@@ -384,10 +397,16 @@
             }
 
             ports.forEach(port => drawPort(ctx, port));
-
-            if (selectedNode && !activeTextInput && !selectedNode.isFixed) {
-                drawResizeHandles(ctx, selectedNode);
+            
+            if(selection.length === 1 && selection[0].type === 'node'){
+                 const selectedNode = findNode(selection[0].id);
+                 if (selectedNode && !activeTextInput && !selectedNode.isFixed) {
+                    drawResizeHandles(ctx, selectedNode);
+                }
             }
+            
+            drawSelectionRect(ctx);
+
             ctx.restore();
         }
         
@@ -464,12 +483,15 @@
              context.stroke();
              context.setLineDash([]);
 
-             if (!activeTextInput || activeTextInput.targetType !== 'node' || activeTextInput.targetId !== node.id) {
+             if (!activeTextInput || activeTextInput.targetId !== node.id) {
                  context.fillStyle = '#1f2937';
-                 context.font = '14px Inter';
+                 context.font = 'bold 14px Inter';
                  context.textAlign = 'left';
                  context.textBaseline = 'top';
-                 context.fillText(node.text, node.x + 10, node.y + 10);
+                 context.fillText(node.instanceName, node.x + 10, node.y + 10);
+                 
+                 context.font = '12px Inter';
+                 context.fillText(`(M: ${node.moduleName})`, node.x + 10, node.y + 28);
              }
              if (node.isFixed) {
                  drawLockIcon(context, node.x + node.width - 18, node.y + 5);
@@ -502,7 +524,7 @@
                 context.strokeRect(pos.x - portSize/2, pos.y - portSize/2, portSize, portSize);
             }
             
-            if (!activeTextInput || activeTextInput.targetType !== 'port' || activeTextInput.targetId !== port.id) {
+            if (!activeTextInput || activeTextInput.targetId !== port.id) {
                 context.fillStyle = '#4b5563';
                 context.font = '10px Inter';
                 context.textAlign = 'center';
@@ -512,7 +534,7 @@
         }
         
         function drawLink(context, link) {
-            const isSelected = selection?.type === 'link' && selection.id === link.id;
+            const isSelected = selection.some(item => item.id === link.id && item.type === 'link');
             const color = link.color || '#6b7280';
             const lineWidth = isSelected ? 4 : 2;
 
@@ -636,6 +658,18 @@
             context.stroke();
             context.restore();
         }
+        
+        function drawSelectionRect(context) {
+            if (!selectionRect.active) return;
+            context.fillStyle = 'rgba(59, 130, 246, 0.2)';
+            context.strokeStyle = 'rgba(59, 130, 246, 0.8)';
+            context.lineWidth = 1 / scale;
+            context.setLineDash([5, 5]);
+            context.fillRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
+            context.strokeRect(selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height);
+            context.setLineDash([]);
+        }
+
 
         function drawLockIcon(context, x, y) {
             context.save();
@@ -782,6 +816,9 @@
             if (isPanning) {
                 pan.x += e.movementX;
                 pan.y += e.movementY;
+            } else if (selectionRect.active) {
+                selectionRect.width = mousePos.x - selectionRect.x;
+                selectionRect.height = mousePos.y - selectionRect.y;
             } else {
                  const activeModes = isConnectionMode || isPortCreationMode;
             
@@ -813,8 +850,8 @@
                      const item = findItemAtPos(mousePos);
                      if (isConnectionMode && item?.type === 'port') hovered = item;
                      if (isPortCreationMode && item?.type === 'node') hovered = item;
-                } else if (isResizing && selection?.type === 'node') {
-                    const node = findNode(selection.id);
+                } else if (isResizing && selection.length === 1 && selection[0].type === 'node') {
+                    const node = findNode(selection[0].id);
                     if (node.isFixed) return;
                     const dx = (mousePos.x - dragOffset.startWorldX);
                     const dy = (mousePos.y - dragOffset.startWorldY);
@@ -830,35 +867,62 @@
                     if (newW >= minNodeWidth) { node.x = newX; node.width = newW; }
                     if (newH >= minNodeHeight) { node.y = newY; node.height = newH; }
 
-                } else if (isDragging && selection?.type === 'node') {
-                    const node = findNode(selection.id);
-                    if (node.isFixed) return;
-                    
-                    let newX = mousePos.x - dragOffset.offsetX;
-                    let newY = mousePos.y - dragOffset.offsetY;
-                    
-                    if (node.parentId !== null) {
-                        const parent = findNode(node.parentId);
-                        if(parent) {
-                            newX = Math.max(parent.x, Math.min(newX, parent.x + parent.width - node.width));
-                            newY = Math.max(parent.y, Math.min(newY, parent.y + parent.height - node.height));
+                } else if (isDragging && selection.length > 0) {
+                     let dx = mousePos.x - dragOffset.x;
+                     let dy = mousePos.y - dragOffset.y;
+                     
+                     if(selection.length === 1 && selection[0].type === 'node') {
+                        const node = findNode(selection[0].id);
+                        if (node && node.parentId !== null) {
+                            const parent = findNode(node.parentId);
+                            if (parent) {
+                                const proposedX = node.x + dx;
+                                const proposedY = node.y + dy;
+                                
+                                const constrainedX = Math.max(parent.x, Math.min(proposedX, parent.x + parent.width - node.width));
+                                const constrainedY = Math.max(parent.y, Math.min(proposedY, parent.y + parent.height - node.height));
+                                
+                                dx = constrainedX - node.x;
+                                dy = constrainedY - node.y;
+                            }
                         }
-                    }
-
-                    const dx = newX - node.x;
-                    const dy = newY - node.y;
-                    if (dx !== 0 || dy !== 0) {
-                        moveNodeAndDescendants(selection.id, dx, dy);
-                    }
+                     }
+                     
+                     const movedNodeIds = new Set();
+                     selection.forEach(sel => {
+                         if(sel.type === 'node'){
+                            const node = findNode(sel.id);
+                            if(node && !node.isFixed && !movedNodeIds.has(node.id)) {
+                                moveNodeAndDescendants(node.id, dx, dy, movedNodeIds);
+                            }
+                         }
+                     });
+                     
+                     selection.forEach(sel => {
+                        if (sel.type === 'link') {
+                            const link = findLink(sel.id);
+                            if (link) {
+                                for(let i=1; i < link.path.length-1; i++) {
+                                    link.path[i].x += dx;
+                                    link.path[i].y += dy;
+                                }
+                            }
+                        }
+                     });
+                     
+                     dragOffset.x = mousePos.x;
+                     dragOffset.y = mousePos.y;
+                     
                 } else {
-                    const handleInfo = getResizeHandleAtPos(mousePos, findNode(selection?.id));
+                    const item = (selection.length === 1 && selection[0].type === 'node') ? findNode(selection[0].id) : null;
+                    const handleInfo = getResizeHandleAtPos(mousePos, item);
                     if (handleInfo) {
                         canvas.style.cursor = handleInfo.cursor;
-                        hovered = selection;
+                        hovered = selection[0];
                     } else {
                         hovered = findItemAtPos(mousePos);
                         let cursorStyle = 'default';
-                        if (hovered?.type === 'linkPoint' || isMovingPortText) cursorStyle = 'grab';
+                        if (hovered?.type === 'linkPoint' || hovered?.type === 'portText') cursorStyle = 'grab';
                         else if (hovered?.type === 'port') cursorStyle = 'pointer';
                         else if (hovered?.type === 'node') cursorStyle = 'move';
                         canvas.style.cursor = cursorStyle;
@@ -870,8 +934,8 @@
         
         function findItemAtPos(pos) {
             // Priority 1: Link Waypoint Handles on the currently selected link
-            if (selection?.type === 'link') {
-                const link = findLink(selection.id);
+            if (selection.length === 1 && selection[0].type === 'link') {
+                const link = findLink(selection[0].id);
                 if (link && link.path) {
                     for (let i = 1; i < link.path.length - 1; i++) {
                         const pt = link.path[i];
@@ -926,11 +990,17 @@
         }
 
         canvas.addEventListener('mousedown', (e) => {
-            if (activeTextInput) { activeTextInput.input.blur(); return; }
+            if (activeTextInput) { activeTextInput.input.blur(); }
             updateMousePos(e);
             
             if (e.button === 1) { // Middle mouse button
                 isPanning = true;
+                return;
+            }
+
+            if(isSelectionMode) {
+                selectionRect = {x: mousePos.x, y: mousePos.y, width: 0, height: 0, active: true};
+                selection = [];
                 return;
             }
             
@@ -946,14 +1016,13 @@
                 const handleInfo = getResizeHandleAtPos(mousePos, findNode(item.id));
                 if(handleInfo) {
                     isResizing = true;
-                    selection = item;
+                    selection = [item];
                     resizingDirection = handleInfo.direction;
-                    const node = findNode(selection.id);
+                    const node = findNode(selection[0].id);
                     dragOffset = { startX: mousePos.x, startY: mousePos.y, nodeX: node.x, nodeY: node.y, nodeW: node.width, nodeH: node.height, startWorldX: mousePos.x, startWorldY: mousePos.y };
                     return;
                 }
             }
-            
             
             if (item?.type === 'linkPoint') {
                 isMovingLinkPoint = true;
@@ -966,16 +1035,28 @@
                 return;
             }
             
-            selection = item;
-            if(selection?.type === 'node') {
-                const node = findNode(selection.id);
-                if (!node.isFixed) {
-                     isDragging = true;
-                    dragOffset = { offsetX: mousePos.x - node.x, offsetY: mousePos.y - node.y };
+            if (item) {
+                if(!e.shiftKey) {
+                    if (!selection.some(sel => sel.id === item.id && sel.type === item.type)) {
+                       selection = [item];
+                    }
+                } else {
+                     const index = selection.findIndex(sel => sel.id === item.id && sel.type === item.type);
+                     if (index > -1) {
+                         selection.splice(index, 1);
+                     } else {
+                         selection.push(item);
+                     }
                 }
-            } else if (selection === null) {
-                isPanning = true;
-                canvas.style.cursor = 'grabbing';
+                
+                if(selection.some(sel => sel.type === 'node')){
+                     isDragging = true;
+                    dragOffset = {x: mousePos.x, y: mousePos.y};
+                }
+            } else {
+                 selection = [];
+                 isPanning = true;
+                 canvas.style.cursor = 'grabbing';
             }
             
             updateUI();
@@ -983,6 +1064,13 @@
         });
 
         canvas.addEventListener('mouseup', (e) => {
+             if (selectionRect.active) {
+                selectItemsInRect();
+                selectionRect.active = false;
+                isSelectionMode = false;
+                selectBtn.classList.remove('active');
+                canvas.style.cursor = 'default';
+            }
             if(isDragging || isResizing || isMovingLinkPoint || isMovingPortText) {
                  saveStateToHistory();
             }
@@ -995,10 +1083,16 @@
         
         canvas.addEventListener('dblclick', (e) => {
             const item = findItemAtPos(mousePos);
-            if (item?.type === 'node') createTextInputForNode(findNode(item.id));
-            if (item?.type === 'port' || item?.type === 'portText') {
+            if(item?.type === 'node') {
+                const node = findNode(item.id);
+                if (mousePos.y > node.y + (node.height / 2)) {
+                    createTextInput(node, 'moduleName', 'node');
+                } else {
+                    createTextInput(node, 'instanceName', 'node');
+                }
+            } else if (item?.type === 'port' || item?.type === 'portText') {
                 const portId = item.type === 'port' ? item.id : item.portId;
-                createTextInputForPort(findPort(portId));
+                createTextInput(findPort(portId), 'text', 'port');
             }
         });
         
@@ -1026,8 +1120,8 @@
         });
         
         document.addEventListener('keydown', (e) => {
-            if (selection?.type === 'port') {
-                const port = findPort(selection.id);
+            if (selection.length === 1 && selection[0].type === 'port') {
+                const port = findPort(selection[0].id);
                 let moveAmount = 2 / (port.side === 'top' || port.side === 'bottom' ? findNode(port.nodeId).width : findNode(port.nodeId).height);
                 if (e.key === 'ArrowLeft') port.position -= moveAmount;
                 if (e.key === 'ArrowRight') port.position += moveAmount;
@@ -1047,6 +1141,42 @@
                  if (isMovingLinkPoint) {isMovingLinkPoint = false; movingPointInfo = null; draw();}
              }
         });
+        
+        function selectItemsInRect() {
+            const x1 = Math.min(selectionRect.x, selectionRect.x + selectionRect.width);
+            const x2 = Math.max(selectionRect.x, selectionRect.x + selectionRect.width);
+            const y1 = Math.min(selectionRect.y, selectionRect.y + selectionRect.height);
+            const y2 = Math.max(selectionRect.y, selectionRect.y + selectionRect.height);
+        
+            selection = [];
+        
+            nodes.forEach(node => {
+                if (node.x < x2 && node.x + node.width > x1 && node.y < y2 && node.y + node.height > y1) {
+                    selection.push({ type: 'node', id: node.id });
+                }
+            });
+        
+            ports.forEach(port => {
+                const pos = getPortAbsPos(port);
+                if (pos && pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
+                     selection.push({ type: 'port', id: port.id });
+                }
+            });
+        
+            links.forEach(link => {
+                const fromPort = findPort(link.fromPortId);
+                const toPort = findPort(link.toPortId);
+                if(fromPort && toPort){
+                    const isFromNodeSelected = selection.some(s => s.type === 'node' && s.id === fromPort.nodeId);
+                    const isToNodeSelected = selection.some(s => s.type === 'node' && s.id === toPort.nodeId);
+                    if(isFromNodeSelected && isToNodeSelected) {
+                         selection.push({ type: 'link', id: link.id });
+                    }
+                }
+            });
+        
+            updateUI();
+        }
 
         // --- Connection/Port Creation Logic ---
         function toggleConnectionMode() {
@@ -1091,6 +1221,17 @@
         
         function isConnectionValid(sourcePort, targetPort) {
             if (!sourcePort || !targetPort || sourcePort.nodeId === targetPort.nodeId) return false;
+
+            const sourceNode = findNode(sourcePort.nodeId);
+            const targetNode = findNode(targetPort.nodeId);
+            
+            const isSourceChildOfTarget = sourceNode.parentId === targetNode.id;
+            const isTargetChildOfSource = targetNode.parentId === sourceNode.id;
+
+            if (isSourceChildOfTarget || isTargetChildOfSource) {
+                if (sourcePort.nature === 'input' && targetPort.nature === 'input') return true;
+                if (sourcePort.nature === 'output' && targetPort.nature === 'output') return true;
+            }
             
             if (sourcePort.nature === 'bidirectional' || targetPort.nature === 'bidirectional') return true;
             
@@ -1154,33 +1295,37 @@
 
         // --- UI & Panel ---
         function updateUI() {
-            deleteBtn.disabled = !selection;
+            const hasSelection = selection.length > 0;
+            deleteBtn.disabled = !hasSelection;
+            copyBtn.disabled = !hasSelection;
+            pasteBtn.disabled = clipboard === null;
+
             renderPropertiesPanel();
         }
 
         function renderPropertiesPanel() {
              propertiesPanel.innerHTML = '';
-             if (!selection) {
-                 propertiesPanel.innerHTML = `<p id="no-selection" class="text-sm text-gray-500 italic">No item selected.</p>`;
+             if (selection.length !== 1) {
+                 propertiesPanel.innerHTML = `<p id="no-selection" class="text-sm text-gray-500 italic">${selection.length > 1 ? `${selection.length} items selected.` : 'No item selected.'}</p>`;
                  return;
              }
-             if (selection.type === 'node') {
-                 const node = findNode(selection.id);
+             if (selection[0].type === 'node') {
+                 const node = findNode(selection[0].id);
                  if (!node) return;
-                 propertiesPanel.innerHTML = `<h3 class="font-bold">${node.text} Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Background</label><input type="color" id="prop-bgColor" value="${node.backgroundColor || '#FFFFFF'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Transparent</label><input type="checkbox" id="prop-isTransparent" ${node.isTransparent ? 'checked' : ''}></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Color</label><input type="color" id="prop-lineColor" value="${node.lineColor || '#9ca3af'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Style</label><select id="prop-lineStyle" class="border-gray-300 rounded-md shadow-sm w-24"><option ${node.lineStyle === 'Solid' ? 'selected' : ''}>Solid</option><option ${node.lineStyle === 'Dotted' ? 'selected' : ''}>Dotted</option><option ${node.lineStyle === 'Dashed' ? 'selected' : ''}>Dashed</option></select></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Fixed</label><input type="checkbox" id="prop-isFixed" ${node.isFixed ? 'checked' : ''}></div></div>`;
+                 propertiesPanel.innerHTML = `<h3 class="font-bold">${node.instanceName} (${node.moduleName})</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Background</label><input type="color" id="prop-bgColor" value="${node.backgroundColor || '#FFFFFF'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Transparent</label><input type="checkbox" id="prop-isTransparent" ${node.isTransparent ? 'checked' : ''}></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Color</label><input type="color" id="prop-lineColor" value="${node.lineColor || '#9ca3af'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Line Style</label><select id="prop-lineStyle" class="border-gray-300 rounded-md shadow-sm w-24"><option ${node.lineStyle === 'Solid' ? 'selected' : ''}>Solid</option><option ${node.lineStyle === 'Dotted' ? 'selected' : ''}>Dotted</option><option ${node.lineStyle === 'Dashed' ? 'selected' : ''}>Dashed</option></select></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Fixed</label><input type="checkbox" id="prop-isFixed" ${node.isFixed ? 'checked' : ''}></div></div>`;
                  document.getElementById('prop-bgColor').oninput = (e) => { node.backgroundColor = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-isTransparent').onchange = (e) => { node.isTransparent = e.target.checked; draw(); saveStateToHistory(); };
                  document.getElementById('prop-lineColor').oninput = (e) => { node.lineColor = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-lineStyle').onchange = (e) => { node.lineStyle = e.target.value; draw(); saveStateToHistory(); };
                  document.getElementById('prop-isFixed').onchange = (e) => { node.isFixed = e.target.checked; draw(); saveStateToHistory(); };
-             } else if (selection.type === 'link') {
-                  const link = findLink(selection.id);
+             } else if (selection[0].type === 'link') {
+                  const link = findLink(selection[0].id);
                   if (!link) return;
                   propertiesPanel.innerHTML = `<h3 class="font-bold">Link Properties</h3><div class="space-y-3 mt-2"><div class="flex items-center justify-between"><label class="text-sm font-medium">Link Color</label><input type="color" id="prop-linkColor" value="${link.color || '#6b7280'}"></div><div class="flex items-center justify-between"><label class="text-sm font-medium">Arrow Direction</label><select id="prop-arrowDir" class="border-gray-300 rounded-md shadow-sm"><option value="none" ${link.direction === 'none' ? 'selected' : ''}>None</option><option value="-->" ${link.direction === '-->' ? 'selected' : ''}>--&gt;</option><option value="<--" ${link.direction === '<--' ? 'selected' : ''}>&lt;--</option><option value="<-->" ${link.direction === '<-->' ? 'selected' : ''}>&lt;--&gt;</option></select></div></div>`;
                   document.getElementById('prop-linkColor').oninput = (e) => { link.color = e.target.value; draw(); saveStateToHistory(); };
                   document.getElementById('prop-arrowDir').onchange = (e) => { link.direction = e.target.value; draw(); saveStateToHistory(); };
-             } else if(selection.type === 'port' || selection.type === 'portText') {
-                 const port = findPort(selection.id || selection.portId);
+             } else if(selection[0].type === 'port' || selection[0].type === 'portText') {
+                 const port = findPort(selection[0].id || selection[0].portId);
                  if (!port) return;
                  propertiesPanel.innerHTML = `<h3 class="font-bold">${port.text} Properties</h3><div class="space-y-3 mt-2"></div>`;
              }
@@ -1198,47 +1343,65 @@
         }
         
         deleteBtn.addEventListener('click', () => {
-             if (!selection) return;
-             if (selection.type === 'node') {
-                const idsToDelete = getDescendantIds(selection.id);
-                idsToDelete.push(selection.id);
-                nodes = nodes.filter(n => !idsToDelete.includes(n.id));
-                const portsToDelete = ports.filter(p => idsToDelete.includes(p.nodeId)).map(p => p.id);
-                ports = ports.filter(p => !idsToDelete.includes(p.nodeId));
-                links = links.filter(l => !portsToDelete.includes(l.fromPortId) && !portsToDelete.includes(l.toPortId));
-             } else if (selection.type === 'link') {
-                links = links.filter(l => l.id !== selection.id);
-             } else if (selection.type === 'port' || selection.type === 'portText') {
-                 const portIdToDelete = selection.type === 'port' ? selection.id : selection.portId;
-                 ports = ports.filter(p => p.id !== portIdToDelete);
-                 links = links.filter(l => l.fromPortId !== portIdToDelete && l.toPortId !== portIdToDelete);
-             }
-             selection = null;
+            if (selection.length === 0) return;
+
+            let nodeIdsToDelete = new Set();
+            let linkIdsToDelete = new Set();
+            let portIdsToDelete = new Set();
+
+            selection.forEach(sel => {
+                if (sel.type === 'node') {
+                    nodeIdsToDelete.add(sel.id);
+                    const descendantIds = getDescendantIds(sel.id);
+                    descendantIds.forEach(id => nodeIdsToDelete.add(id));
+                } else if (sel.type === 'link') {
+                    linkIdsToDelete.add(sel.id);
+                } else if (sel.type === 'port' || sel.type === 'portText') {
+                    portIdsToDelete.add(sel.portId || sel.id);
+                }
+            });
+
+            ports.forEach(p => {
+                if(nodeIdsToDelete.has(p.nodeId)) portIdsToDelete.add(p.id);
+            });
+            links.forEach(l => {
+                if(portIdsToDelete.has(l.fromPortId) || portIdsToDelete.has(l.toPortId)) linkIdsToDelete.add(l.id);
+            });
+            
+            nodes = nodes.filter(n => !nodeIdsToDelete.has(n.id));
+            ports = ports.filter(p => !portIdsToDelete.has(p.id));
+            links = links.filter(l => !linkIdsToDelete.has(l.id));
+
+             selection = [];
              updateUI();
              saveStateToHistory();
              draw();
         });
 
-        function createTextInput(target, type) {
-            if (activeTextInput) activeTextInput.input.remove();
+        function createTextInput(target, property, type) {
+            if (activeTextInput) { activeTextInput.input.blur(); }
 
             const input = document.createElement('input');
             input.type = 'text';
-            input.value = target.text;
+            input.value = target[property];
             input.className = 'text-input';
 
-            activeTextInput = { input, target, targetType: type };
+            activeTextInput = { input, target, targetType: type, property: property };
             
-            const pos = type === 'node' ? { x: target.x, y: target.y } : getPortAbsPos(target);
-            const screenX = pos.x * scale + pan.x;
-            const screenY = pos.y * scale + pan.y;
-
             if (type === 'node') {
-                 input.style.left = `${screenX + 10}px`; input.style.top = `${screenY + 10}px`;
-                 input.style.width = `${target.width * scale - 20}px`; input.style.fontSize = `${14 * scale}px`;
+                const screenX = target.x * scale + pan.x;
+                const screenY = target.y * scale + pan.y;
+                const yOffset = property === 'instanceName' ? 10 : 28;
+                 input.style.left = `${screenX + 10}px`; 
+                 input.style.top = `${screenY + yOffset}px`;
+                 input.style.width = `${target.width * scale - 20}px`; 
+                 input.style.fontSize = `${(property === 'instanceName' ? 14 : 12) * scale}px`;
             } else if (type === 'port') {
-                input.style.left = `${screenX + target.textOffsetX * scale - 20}px`; 
-                input.style.top = `${screenY + target.textOffsetY * scale - 8}px`;
+                const pos = getPortAbsPos(target);
+                const portScreenX = pos.x * scale + pan.x;
+                const portScreenY = pos.y * scale + pan.y;
+                input.style.left = `${portScreenX + target.textOffsetX * scale - 20}px`; 
+                input.style.top = `${portScreenY + target.textOffsetY * scale - 8}px`;
                 input.style.width = `40px`;
                 input.style.fontSize = `${12 * scale}px`;
             }
@@ -1248,36 +1411,48 @@
             input.select();
             
             const finishEditing = () => {
-                if (!activeTextInput) return;
-                target.text = input.value;
-                container.removeChild(input);
+                if (!activeTextInput || activeTextInput.input !== input) return;
+                target[property] = input.value;
+                if(input.parentNode) {
+                   input.parentNode.removeChild(input);
+                }
                 activeTextInput = null;
                 saveStateToHistory();
                 draw();
             };
+
+            const cancelEditing = () => {
+                if (!activeTextInput || activeTextInput.input !== input) return;
+                if(input.parentNode) {
+                    input.parentNode.removeChild(input);
+                }
+                activeTextInput = null; 
+                draw(); 
+            };
+
             input.addEventListener('blur', finishEditing);
             input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') input.blur();
-                else if (e.key === 'Escape') { container.removeChild(input); activeTextInput = null; draw(); }
+                if (e.key === 'Enter') {
+                    input.blur();
+                } else if (e.key === 'Escape') { 
+                    cancelEditing();
+                }
             });
             draw();
         }
         
-        function createTextInputForNode(node) { createTextInput(node, 'node'); }
-        function createTextInputForPort(port) { createTextInput(port, 'port'); }
-
 
         addNodeBtn.addEventListener('click', () => {
-            const parent = selection?.type === 'node' ? findNode(selection.id) : null;
+            const parent = selection.length === 1 && selection[0].type === 'node' ? findNode(selection[0].id) : null;
             let newNodeX, newNodeY, parentId = null;
             if (parent) { newNodeX = parent.x + 20; newNodeY = parent.y + 40; parentId = parent.id; } 
             else {
                 const topLevelNodes = nodes.filter(n => n.parentId == null).length;
                 newNodeX = 50 + (topLevelNodes % 5) * 20; newNodeY = 50 + (topLevelNodes % 5) * 20;
             }
-            const node = { id: generateId('node'), text: `Node ${nextIds.node}`, x: newNodeX, y: newNodeY, width: 150, height: 80, parentId, backgroundColor: '#ffffff', lineColor: '#9ca3af', lineStyle: 'Solid' };
+            const node = { id: generateId('node'), moduleName: `Module${nextIds.node}`, instanceName: `I${nextIds.node}`, x: newNodeX, y: newNodeY, width: 150, height: 80, parentId, backgroundColor: '#ffffff', lineColor: '#9ca3af', lineStyle: 'Solid' };
             nodes.push(node);
-            selection = {type: 'node', id: node.id};
+            selection = [{type: 'node', id: node.id}];
             saveStateToHistory();
             updateUI();
             draw();
@@ -1309,7 +1484,7 @@
 
 
         // --- Data & Init ---
-        copyBtn.addEventListener('click', () => {
+        copyBtnData.addEventListener('click', () => {
            dataModelText.select();
            document.execCommand('copy');
            showAlert('Diagram data copied to clipboard.');
@@ -1424,7 +1599,7 @@
                     try {
                         const componentData = JSON.parse(event.target.result);
                         if (componentData && componentData.nodes && componentData.ports && componentData.links) {
-                            mergeComponent(componentData, selection?.type === 'node' ? selection.id : null);
+                            mergeComponent(componentData, selection.length === 1 && selection[0].type === 'node' ? selection[0].id : null);
                         } else {
                             showAlert('Invalid component file format.');
                         }
@@ -1438,11 +1613,8 @@
         });
         
         function mergeComponent(componentData, parentId = null) {
-            const nodeOffset = nextIds.node;
-            const portOffset = nextIds.port;
-            const linkOffset = nextIds.link;
-
-            const idMap = {};
+            const nodeIdMap = {};
+            const portIdMap = {};
             const parentNode = parentId !== null ? findNode(parentId) : null;
 
             let basePosition;
@@ -1460,38 +1632,52 @@
                 minY = Math.min(...componentData.nodes.map(n => n.y));
             }
 
+            const offsetX = basePosition.x - minX;
+            const offsetY = basePosition.y - minY;
+
             componentData.nodes.forEach(node => {
                 const oldId = node.id;
-                const newId = node.id + nodeOffset;
-                idMap[oldId] = newId;
+                const newId = generateId('node');
+                nodeIdMap[oldId] = newId;
+                
                 node.id = newId;
+                node.x += offsetX;
+                node.y += offsetY;
 
-                node.x = basePosition.x + (node.x - minX);
-                node.y = basePosition.y + (node.y - minY);
-
-                if (node.parentId !== null) {
-                    node.parentId = idMap[node.parentId];
+                if (node.parentId !== null && nodeIdMap[node.parentId]) {
+                    node.parentId = nodeIdMap[node.parentId];
                 } else if (parentNode) {
                     node.parentId = parentId;
+                } else {
+                    node.parentId = null;
                 }
                 nodes.push(node);
             });
-            nextIds.node += componentData.nodes.length;
             
             componentData.ports.forEach(port => {
-                port.id += portOffset;
-                port.nodeId = idMap[port.nodeId];
+                const oldId = port.id;
+                const newId = generateId('port');
+                portIdMap[oldId] = newId;
+                
+                port.id = newId;
+                port.nodeId = nodeIdMap[port.nodeId];
                 ports.push(port);
             });
-            nextIds.port += componentData.ports.length;
 
             componentData.links.forEach(link => {
-                link.id += linkOffset;
-                link.fromPortId += portOffset;
-                link.toPortId += portOffset;
+                link.id = generateId('link');
+                link.fromPortId = portIdMap[link.fromPortId];
+                link.toPortId = portIdMap[link.toPortId];
+
+                if (link.path && Array.isArray(link.path)) {
+                    link.path.forEach(point => {
+                        point.x += offsetX;
+                        point.y += offsetY;
+                    });
+                }
+                
                 links.push(link);
             });
-            nextIds.link += componentData.links.length;
             
             saveStateToHistory();
             draw();
@@ -1500,6 +1686,16 @@
 
         undoBtn.addEventListener('click', undo);
         redoBtn.addEventListener('click', redo);
+        selectBtn.addEventListener('click', () => {
+            isSelectionMode = !isSelectionMode;
+            if (isSelectionMode) {
+                selectBtn.classList.add('active');
+                canvas.style.cursor = 'crosshair';
+            } else {
+                selectBtn.classList.remove('active');
+                canvas.style.cursor = 'default';
+            }
+        });
         connectBtn.addEventListener('click', toggleConnectionMode);
         document.addEventListener('keydown', (e) => {
              if (e.key === 'Escape') {
